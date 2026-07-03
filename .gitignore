@@ -1,0 +1,6 @@
+/target
+**/*.rs.bk
+*.log
+.env
+config.toml
+metrics_snapshots/

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-gateway-config
+  namespace: ai-gateway
+data:
+  config.toml: |
+    [server]
+    host = "0.0.0.0"
+    port = 8080
+    [rate_limit]
+    requests_per_minute = 600
+    [cache]
+    enabled = true
+    max_capacity = 5000
+    ttl_seconds = 300
+    [auth]
+    enabled = true

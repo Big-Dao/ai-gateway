@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Gateway Admin</title>
+    <link rel="stylesheet" href="/admin/static/admin.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="logo">
+                <span class="logo-icon">⚡</span>
+                <span class="logo-text">AI Gateway</span>
+            </div>
+            <ul class="nav-links">
+                <li class="nav-item active" data-page="dashboard">
+                    <span class="nav-icon">📊</span>
+                    <span>仪表盘</span>
+                </li>
+                <li class="nav-item" data-page="providers">
+                    <span class="nav-icon">🤖</span>
+                    <span>提供商</span>
+                </li>
+                <li class="nav-item" data-page="tenants">
+                    <span class="nav-icon">🏢</span>
+                    <span>租户</span>
+                </li>
+                <li class="nav-item" data-page="apikeys">
+                    <span class="nav-icon">🔑</span>
+                    <span>API Keys</span>
+                </li>
+                <li class="nav-item" data-page="usage">
+                    <span class="nav-icon">📈</span>
+                    <span>用量统计</span>
+                </li>
+                <li class="nav-item" data-page="config">
+                    <span class="nav-icon">⚙️</span>
+                    <span>系统配置</span>
+                    </li>
+                <li class="nav-item" data-page="logs">
+                    <span class="nav-icon">📋</span>
+                    <span>实时日志</span>
+                </li>
+            </ul>
+            <div class="sidebar-footer">
+                <span>v0.1.0</span>
+            </div>
+        </nav>
+
+        <!-- Main content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="header">
+                <h1 id="page-title">仪表盘</h1>
+                <div class="header-actions">
+                    <span class="status-badge" id="status-badge">
+                        <span class="status-dot"></span>
+                        运行中
+                    </span>
+                    <button class="btn btn-refresh" onclick="refreshCurrentPage()" title="刷新">
+                        🔄
+                    </button>
+                </div>
+            </header>
+
+            <!-- Dashboard Page -->
+            <section class="page active" id="page-dashboard">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">总请求数</div>
+                        <div class="stat-value" id="stat-requests">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Prompt Tokens</div>
+                        <div class="stat-value" id="stat-prompt-tokens">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Completion Tokens</div>
+                        <div class="stat-value" id="stat-completion-tokens">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">错误数</div>
+                        <div class="stat-value stat-error" id="stat-errors">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">提供商</div>
+                        <div class="stat-value" id="stat-providers">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">模型数</div>
+                        <div class="stat-value" id="stat-models">0</div>
+                    </div>
+                </div>
+
+                <div class="dashboard-row">
+                    <div class="card">
+                        <h3 class="card-title">各模型请求分布</h3>
+                        <div id="model-chart" class="chart-container">
+                            <div class="empty-state">暂无数据</div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3 class="card-title">系统状态</h3>
+                        <div class="system-status">
+                            <div class="status-row">
+                                <span>响应缓存</span>
+                                <span id="status-cache" class="badge">--</span>
+                            </div>
+                            <div class="status-row">
+                                <span>缓存条目数</span>
+                                <span id="status-cache-size" class="value">0</span>
+                            </div>
+                            <div class="status-row">
+                                <span>限流 (RPM)</span>
+                                <span id="status-ratelimit" class="value">--</span>
+                            </div>
+                            <div class="status-row">
+                                <span>认证</span>
+                                <span id="status-auth" class="badge">--</span>
+                            </div>
+                            <div class="status-row">
+                                <span>API Key 数量</span>
+                                <span id="status-keys" class="value">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Usage Page (MVP 2 Metering) -->
+            <section class="page" id="page-usage">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">总成本 (分)</div>
+                        <div class="stat-value" id="usage-total-cost">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">总请求</div>
+                        <div class="stat-value" id="usage-total-requests">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">总 Token</div>
+                        <div class="stat-value" id="usage-total-tokens">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">错误数</div>
+                        <div class="stat-value stat-error" id="usage-total-errors">0</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 class="card-title">📈 租户用量明细</h3>
+                    <table class="data-table" id="usage-table">
+                        <thead>
+                            <tr>
+                                <th>租户</th>
+                                <th>请求数</th>
+                                <th>Prompt Token</th>
+                                <th>Completion Token</th>
+                                <th>总 Token</th>
+                                <th>错误数</th>
+                                <th>预估成本(分)</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+
+                <div class="card">
+                    <h3 class="card-title">🏷️ 费率卡配置</h3>
+                    <div class="rate-card-form">
+                        <div class="form-row">
+                            <label>Prompt 费率 (每百万 token / 分)</label>
+                            <input type="number" id="ratecard-prompt" min="0" placeholder="0 = 免费" />
+                        </div>
+                        <div class="form-row">
+                            <label>Completion 费率 (每百万 token / 分)</label>
+                            <input type="number" id="ratecard-completion" min="0" placeholder="0 = 免费" />
+                        </div>
+                        <button class="btn btn-primary" onclick="saveRateCard()">💾 保存费率卡</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Providers Page -->
+            <section class="page" id="page-providers">
+                <div class="page-actions">
+                    <button class="btn btn-primary" onclick="showAddProviderModal()">
+                        ➕ 添加提供商
+                    </button>
+                </div>
+                <div class="card">
+                    <table class="data-table" id="providers-table">
+                        <thead>
+                            <tr>
+                                <th>名称</th>
+                                <th>Base URL</th>
+                                <th>API Key</th>
+                                <th>模型</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Tenants Page -->
+            <section class="page" id="page-tenants">
+                <div class="page-actions">
+                    <button class="btn btn-primary" onclick="showAddTenantModal()">
+                        ➕ 添加租户
+                    </button>
+                </div>
+                <div class="card">
+                    <table class="data-table" id="tenants-table">
+                        <thead>
+                            <tr>
+                                <th>租户 ID</th>
+                                <th>RPM</th>
+                                <th>RPD</th>
+                                <th>TPD</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- API Keys Page -->
+            <section class="page" id="page-apikeys">
+                <div class="page-actions">
+                    <button class="btn btn-primary" onclick="showAddKeyModal()">
+                        ➕ 添加 API Key
+                    </button>
+                </div>
+                <div class="card">
+                    <div class="auth-status">
+                        <span>认证状态:</span>
+                        <span id="auth-status-text" class="badge">--</span>
+                    </div>
+                    <table class="data-table" id="keys-table">
+                        <thead>
+                            <tr>
+                                <th>API Key</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Config Page -->
+            <section class="page" id="page-config">
+                <div class="config-grid">
+                    <div class="card">
+                        <h3 class="card-title">缓存配置</h3>
+                        <form id="cache-form" class="config-form">
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="cache-enabled" checked>
+                                    启用响应缓存
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label>最大容量</label>
+                                <input type="number" id="cache-capacity" value="1000" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>TTL (秒)</label>
+                                <input type="number" id="cache-ttl" value="300" min="1">
+                            </div>
+                            <button type="submit" class="btn btn-primary">保存</button>
+                        </form>
+                    </div>
+                    <div class="card">
+                        <h3 class="card-title">限流配置</h3>
+                        <form id="ratelimit-form" class="config-form">
+                            <div class="form-group">
+                                <label>每分钟请求数 (RPM)</label>
+                                <input type="number" id="rpm-value" value="60" min="1">
+                            </div>
+                            <button type="submit" class="btn btn-primary">保存</button>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Logs Page -->
+            <section class="page" id="page-logs">
+                <div class="page-actions">
+                    <button class="btn btn-secondary" onclick="clearLogs()">🗑️ 清空</button>
+                    <button class="btn btn-refresh" onclick="refreshLogs()">🔄 刷新</button>
+                    <label class="auto-refresh">
+                        <input type="checkbox" id="auto-refresh-logs" checked onchange="toggleAutoRefresh()">
+                        自动刷新
+                    </label>
+                </div>
+                <div class="card">
+                    <div class="log-container" id="log-container">
+                        <div class="log-empty">等待日志...</div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Add Provider Modal -->
+    <div class="modal-overlay" id="provider-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="provider-modal-title">添加提供商</h3>
+                <button class="modal-close" onclick="closeModal('provider-modal')">&times;</button>
+            </div>
+            <form id="provider-form" class="modal-form">
+                <div class="form-group">
+                    <label>提供商名称 *</label>
+                    <input type="text" id="provider-name" placeholder="如: openai" required>
+                </div>
+                <div class="form-group">
+                    <label>API Key</label>
+                    <input type="password" id="provider-apikey" placeholder="留空表示不需要">
+                </div>
+                <div class="form-group">
+                    <label>Base URL</label>
+                    <input type="text" id="provider-baseurl" placeholder="留空使用默认">
+                </div>
+                <div class="form-group">
+                    <label>模型列表 (逗号分隔)</label>
+                    <input type="text" id="provider-models" placeholder="如: gpt-4o, gpt-4o-mini" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('provider-modal')">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Tenant Modal -->
+    <div class="modal-overlay" id="tenant-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>添加租户</h3>
+                <button class="modal-close" onclick="closeModal('tenant-modal')">&times;</button>
+            </div>
+            <form id="tenant-form" class="modal-form">
+                <div class="form-group">
+                    <label>租户 ID *</label>
+                    <input type="text" id="tenant-id" placeholder="如: acme-corp" required>
+                </div>
+                <div class="form-group">
+                    <label>RPM (每分钟请求数)</label>
+                    <input type="number" id="tenant-rpm" value="60" min="1">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('tenant-modal')">取消</button>
+                    <button type="submit" class="btn btn-primary">添加</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add API Key Modal -->
+    <div class="modal-overlay" id="key-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>添加 API Key</h3>
+                <button class="modal-close" onclick="closeModal('key-modal')">&times;</button>
+            </div>
+            <form id="key-form" class="modal-form">
+                <div class="form-group">
+                    <label>API Key 值 *</label>
+                    <input type="text" id="new-key-value" placeholder="输入 API Key" required>
+                </div>
+                <div class="form-group">
+                    <label>租户</label>
+                    <select id="new-key-tenant">
+                        <option value="">默认</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>角色</label>
+                    <select id="new-key-role">
+                        <option value="developer">开发者 (developer)</option>
+                        <option value="tenant_admin">租户管理员 (tenant_admin)</option>
+                        <option value="admin">全局管理员 (admin)</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('key-modal')">取消</button>
+                    <button type="submit" class="btn btn-primary">添加</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast notifications -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="/admin/static/admin.js"></script>
+</body>
+</html>

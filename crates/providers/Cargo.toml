@@ -1,0 +1,18 @@
+[package]
+name = "providers"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gateway-core = { path = "../gateway-core" }
+tokio.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+bytes.workspace = true
+uuid.workspace = true
+chrono.workspace = true
