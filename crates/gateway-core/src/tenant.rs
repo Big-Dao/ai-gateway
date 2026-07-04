@@ -10,6 +10,12 @@ impl Role {
     pub const TENANT_ADMIN: Role = Role(50);
     pub const ADMIN: Role = Role(100);
 
+    /// Parse a role from its wire string form, falling back to [`Role::DEVELOPER`]
+    /// for unknown values.
+    ///
+    /// Intentionally not `std::str::FromStr`: this mapping is infallible
+    /// (unknown → developer), whereas `FromStr` requires a `Result`.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "admin" => Role::ADMIN,
@@ -98,7 +104,7 @@ fn default_tpd() -> u64 {
 }
 
 /// Per-tenant configuration entry.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct TenantConfig {
     #[serde(default)]
     pub quotas: TenantQuotas,
@@ -111,17 +117,6 @@ pub struct TenantConfig {
     /// alert for this tenant (default).
     #[serde(default)]
     pub cost_alert_threshold_cents: Option<f64>,
-}
-
-impl Default for TenantConfig {
-    fn default() -> Self {
-        Self {
-            quotas: TenantQuotas::default(),
-            allowed_providers: None,
-            allowed_models: None,
-            cost_alert_threshold_cents: None,
-        }
-    }
 }
 
 /// Build a default-tenant config map for backward compat.

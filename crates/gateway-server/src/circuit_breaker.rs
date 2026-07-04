@@ -122,7 +122,7 @@ impl CircuitBreaker {
             CircuitState::Open => {
                 if entry
                     .opened_at
-                    .map_or(false, |t| now.duration_since(t) >= self.config.cooldown)
+                    .is_some_and(|t| now.duration_since(t) >= self.config.cooldown)
                 {
                     debug!(
                         provider = provider_name,
@@ -220,6 +220,7 @@ impl CircuitBreaker {
     }
 
     /// Get the current state of a provider's circuit breaker.
+    #[allow(dead_code)] // exposed for /deep-health and admin diagnostics
     pub async fn state(&self, provider_name: &str) -> CircuitState {
         let map = self.inner.read().await;
         map.get(provider_name)

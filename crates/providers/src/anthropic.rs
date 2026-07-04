@@ -319,8 +319,7 @@ impl LLMProvider for AnthropicProvider {
                             if line.starts_with("event: ") {
                                 continue;
                             }
-                            if line.starts_with("data: ") {
-                                let data = &line[6..];
+                            if let Some(data) = line.strip_prefix("data: ") {
                                 if let Ok(event) =
                                     serde_json::from_str::<AnthropicStreamEvent>(data)
                                 {

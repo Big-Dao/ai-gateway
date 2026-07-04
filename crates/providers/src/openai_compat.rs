@@ -27,7 +27,7 @@ impl OpenAICompatProvider {
         name: impl Into<String>,
         api_key: Option<String>,
         base_url: impl Into<String>,
-        models: Vec<String>,
+        _models: Vec<String>,
         extra_headers: HashMap<String, String>,
         field_overrides: FieldOverrides,
     ) -> Self {

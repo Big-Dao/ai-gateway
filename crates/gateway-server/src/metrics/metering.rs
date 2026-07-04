@@ -2,9 +2,7 @@ use gateway_core::metering::{CostBreakdown, CostSummary, ModelCost};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
 use tokio::sync::Mutex;
-use tracing::{info, warn};
 
 /// Maximum number of detail events retained in memory. When this cap is hit,
 /// older events are dropped so the buffer can't grow without bound (M5 —
@@ -314,6 +312,7 @@ impl MeteringService {
     }
 
     /// Snapshot event count (for PVC flush, deferred).
+    #[allow(dead_code)] // reserved for the deferred persistence-flush path
     pub async fn event_count(&self) -> usize {
         self.events.lock().await.len()
     }
@@ -341,6 +340,7 @@ impl MeteringService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::SystemTime;
 
     /// Helper to build a minimal metering event.
     fn mk_event(tenant_id: &str, cost_cents: f64) -> MeteringEvent {

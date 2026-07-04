@@ -8,7 +8,6 @@ use axum::{
 use std::sync::Arc;
 use tracing::warn;
 
-use crate::middleware::auth::AuthKey;
 use crate::state::AppState;
 use gateway_core::error::GatewayError;
 use gateway_core::tenant::TenantContext;
@@ -29,7 +28,7 @@ fn error_response(e: GatewayError) -> Response {
 
 pub async fn quota_middleware(
     State(state): State<Arc<AppState>>,
-    mut request: Request,
+    request: Request,
     next: Next,
 ) -> Response {
     // Skip for unauthenticated paths

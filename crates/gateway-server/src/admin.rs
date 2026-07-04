@@ -9,17 +9,15 @@ use gateway_core::audit::AuditAction;
 use gateway_core::metering::CostSummary;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::circuit_breaker::CircuitState;
 use crate::metrics::metering::TenantUsage;
 use crate::middleware::auth::AuthKey;
-use crate::middleware::rbac::{require_role, require_tenant};
+use crate::middleware::rbac::require_role;
 use crate::routes::ApiError;
 use crate::state::AppState;
-use gateway_core::auth_key::ApiKeyEntry;
-use gateway_core::error::GatewayError;
-use gateway_core::tenant::{Role, TenantContext};
+use gateway_core::tenant::Role;
 
 // ─── Request/Response types ─────────────────────────────────────────
 
@@ -190,7 +188,7 @@ async fn list_providers(State(state): State<Arc<AppState>>) -> Json<Vec<Provider
         .iter()
         .map(|(name, cfg)| ProviderInfo {
             name: name.clone(),
-            api_key_set: cfg.api_key.as_ref().map_or(false, |k| !k.is_empty()),
+            api_key_set: cfg.api_key.as_ref().is_some_and(|k| !k.is_empty()),
             base_url: cfg.base_url.clone(),
             models: cfg.models.clone(),
         })
@@ -212,7 +210,7 @@ async fn get_provider(
 
     Ok(Json(ProviderInfo {
         name,
-        api_key_set: cfg.api_key.as_ref().map_or(false, |k| !k.is_empty()),
+        api_key_set: cfg.api_key.as_ref().is_some_and(|k| !k.is_empty()),
         base_url: cfg.base_url.clone(),
         models: cfg.models.clone(),
     }))
@@ -455,7 +453,6 @@ async fn create_key(
     // Also add to the in-memory store so it works immediately
     {
         use gateway_core::auth_key::ApiKeyEntry;
-        use gateway_core::error::GatewayError;
         let entry = ApiKeyEntry::new(&plaintext_key, &tenant_for_store, &role_for_store);
         state.auth_store.write().await.add(entry);
     }

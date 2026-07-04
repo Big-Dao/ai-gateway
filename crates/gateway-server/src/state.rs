@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
@@ -10,7 +10,6 @@ use gateway_core::auth_key::ApiKeyStore;
 use gateway_core::config::{AppConfig, ProviderConfig};
 use gateway_core::error::GatewayError;
 use gateway_core::provider::LLMProvider;
-use gateway_core::tenant::Role;
 use gateway_core::types::*;
 use providers::*;
 
@@ -211,6 +210,7 @@ impl AppState {
     }
 
     /// Look up a provider by model name.
+    #[allow(dead_code)] // model-keyed lookup; routing currently uses get_provider_by_name
     pub async fn get_provider(&self, model: &str) -> Option<Arc<dyn LLMProvider>> {
         let providers = self.providers.read().await;
         providers.get(model).cloned()
@@ -230,7 +230,7 @@ impl AppState {
     ) -> Result<(), GatewayError> {
         // If the provider has field_overrides, treat it as OpenAI-compatible.
         // Also fall back to compat mode for unknown provider names (not built-in).
-        let builtin = matches!(name.as_ref(), "openai" | "anthropic" | "gemini" | "ollama");
+        let builtin = matches!(name, "openai" | "anthropic" | "gemini" | "ollama");
         let provider: Arc<dyn LLMProvider> = if provider_cfg.field_overrides.is_some() || !builtin {
             Arc::new(OpenAICompatProvider::new(
                 name,
@@ -317,6 +317,7 @@ impl AppState {
     }
 
     /// Record an error.
+    #[allow(dead_code)] // exposed for the admin/observability API
     pub async fn record_error(&self) {
         let mut m = self.metrics.lock().await;
         m.total_errors += 1;

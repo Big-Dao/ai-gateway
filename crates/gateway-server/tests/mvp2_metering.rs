@@ -7,6 +7,7 @@ fn u(s: &TestServer, p: &str) -> String {
 
 /// Spawn a server with structured_keys (`api_keys` TOML field) and a high
 /// rate-limit so rate-limit middleware never interferes with quota testing.
+#[allow(dead_code)]
 async fn spawn_quota_test_server() -> TestServer {
     TestServer::spawn_with(
         &["admin-key", "dev-key"],

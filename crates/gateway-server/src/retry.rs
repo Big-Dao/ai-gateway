@@ -1,10 +1,8 @@
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{info, instrument, warn};
 
 use gateway_core::error::GatewayError;
-use gateway_core::provider::LLMProvider;
 use gateway_core::types::*;
 
 use crate::circuit_breaker::CircuitBreaker;
@@ -22,6 +20,7 @@ pub struct RetryConfig {
     /// Backoff multiplier.
     pub backoff_multiplier: f64,
     /// Whether to attempt fallback to another provider on final failure.
+    #[allow(dead_code)] // reserved for a per-request fallback toggle (currently always-on)
     pub enable_fallback: bool,
 }
 
@@ -140,15 +139,15 @@ pub async fn chat_completion_with_retry(
         }
     }
 
-    Err(last_error.unwrap_or_else(|| GatewayError::ProviderNotFound(model)))
+    Err(last_error.unwrap_or(GatewayError::ProviderNotFound(model)))
 }
 
 /// Execute a streaming chat completion with retry and fallback.
-#[instrument(skip(state, circuit_breaker, config, request), fields(model = %request.model))]
+#[instrument(skip(state, circuit_breaker, _config, request), fields(model = %request.model))]
 pub async fn chat_completion_stream_with_retry(
     state: &AppState,
     circuit_breaker: &CircuitBreaker,
-    config: &RetryConfig,
+    _config: &RetryConfig,
     request: ChatCompletionRequest,
 ) -> Result<(gateway_core::provider::ChunkStream, AttemptInfo), GatewayError> {
     let model = request.model.clone();
@@ -205,7 +204,7 @@ pub async fn chat_completion_stream_with_retry(
         }
     }
 
-    Err(last_error.unwrap_or_else(|| GatewayError::ProviderNotFound(model)))
+    Err(last_error.unwrap_or(GatewayError::ProviderNotFound(model)))
 }
 
 /// Build the ordered list of provider names to try for a given model.
@@ -240,15 +239,12 @@ fn is_retryable(error: &GatewayError) -> bool {
         // Timeouts and upstream errors are retryable.
         GatewayError::UpstreamError(msg) => {
             // Don't retry client errors (4xx except 429).
-            if msg.contains("400")
+            // NOTE: status codes are matched on the error string; see known-issues —
+            // this should move to a structured status field.
+            !(msg.contains("400")
                 || msg.contains("401")
                 || msg.contains("403")
-                || msg.contains("404")
-            {
-                false
-            } else {
-                true
-            }
+                || msg.contains("404"))
         }
         // Rate limited — retryable with backoff.
         GatewayError::RateLimited => true,

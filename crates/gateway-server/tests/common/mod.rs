@@ -11,6 +11,9 @@
 //! Each [`TestServer`] picks an unused ephemeral port (via
 //! `TcpListener::bind("127.0.0.1:0")`) so parallel tests never collide.
 
+// Test helpers: not every spawn variant is exercised by every test file.
+#![allow(dead_code)]
+
 use std::net::TcpListener;
 use std::process::Stdio;
 use std::time::Duration;

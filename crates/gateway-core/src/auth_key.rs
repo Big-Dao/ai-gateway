@@ -83,6 +83,12 @@ pub struct ApiKeyStore {
     by_id: HashMap<String, usize>,
 }
 
+impl Default for ApiKeyStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ApiKeyStore {
     pub fn new() -> Self {
         Self {

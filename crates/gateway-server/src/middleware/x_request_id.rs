@@ -16,6 +16,7 @@ use axum::{
 use uuid::Uuid;
 
 /// Extension key for handing the request id into inner handlers if needed.
+#[allow(dead_code)] // reserved for handlers that need the correlated id
 #[derive(Clone, Debug)]
 pub struct RequestId(pub String);
 

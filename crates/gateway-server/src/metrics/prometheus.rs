@@ -1,7 +1,13 @@
 //! Prometheus metrics exporter (MVP 2+3).
+//!
+//! Metric handles are write-only by design (the registry reads them at scrape
+//! time), and several `record_*` methods are wired incrementally — allow dead
+//! code here rather than annotating each handle and recorder individually.
+#![allow(dead_code)]
+
 use prometheus::{
-    Encoder, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge,
-    IntGaugeVec, Opts, Registry, TextEncoder,
+    Encoder, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGaugeVec, Opts, Registry,
+    TextEncoder,
 };
 
 fn register_all(

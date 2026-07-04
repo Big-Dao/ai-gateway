@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use tracing::warn;
 
 use crate::middleware::auth::AuthKey;
@@ -36,6 +35,7 @@ pub async fn require_role(
 }
 
 /// Check that the authenticated key belongs to the given tenant (or is global admin).
+#[allow(dead_code)] // reserved for tenant-scoped admin endpoints
 pub async fn require_tenant(
     state: &AppState,
     auth_key: &AuthKey,
@@ -59,7 +59,6 @@ pub async fn require_tenant(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use gateway_core::auth_key::{ApiKeyEntry, ApiKeyStore};
     use gateway_core::tenant::Role;
 

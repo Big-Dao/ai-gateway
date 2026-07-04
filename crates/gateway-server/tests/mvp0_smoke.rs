@@ -133,9 +133,7 @@ async fn mvp0_rate_limit_small() {
         wait().await;
     }
 
-    let limited = statuses
-        .iter()
-        .any(|s| *s == reqwest::StatusCode::TOO_MANY_REQUESTS);
+    let limited = statuses.contains(&reqwest::StatusCode::TOO_MANY_REQUESTS);
     assert!(
         limited,
         "expected some 429 responses at RPM=5 with 8 rapid requests, got: {:?}",

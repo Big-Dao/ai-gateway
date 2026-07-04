@@ -154,6 +154,7 @@ impl QuotaEngine {
     }
 
     /// Get current usage snapshot for a tenant.
+    #[allow(dead_code)] // exposed for the admin/observability API
     pub async fn tenant_state(&self, tenant_id: &str) -> Option<(u64, u64, u64, u64)> {
         let states = self.states.lock().await;
         states.get(tenant_id).map(|s| {
@@ -168,6 +169,7 @@ impl QuotaEngine {
 
     /// Reset all quotas (for testing).
     #[cfg(test)]
+    #[allow(dead_code)]
     pub async fn reset(&self) {
         self.states.lock().await.clear();
     }

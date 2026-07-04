@@ -3,7 +3,6 @@ use axum::{
     http::{self, header},
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
 use std::sync::Arc;
 use tracing::warn;
@@ -41,7 +40,7 @@ pub async fn auth_middleware(
         .load(std::sync::atomic::Ordering::Relaxed);
 
     let path = request.uri().path();
-    if !enabled || UNAUTHENTICATED_PATHS.iter().any(|p| path == *p) {
+    if !enabled || UNAUTHENTICATED_PATHS.contains(&path) {
         return next.run(request).await;
     }
 
