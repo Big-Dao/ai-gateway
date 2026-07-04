@@ -12,6 +12,9 @@ cd "$REPO"
 LOG="${TMPDIR:-/tmp}/gateway-verify.log"
 MARKER="target/.verified"
 PORT=8080
+# Test key defaults to the example-config key (my-secret-key) so E2E works
+# out of the box; override with GATEWAY_TEST_KEY=<real-key> for other setups.
+TEST_API_KEY="${GATEWAY_TEST_KEY:-my-secret-key}"
 
 ok()   { printf '  \xE2\x9C\x93 %s\n' "$1"; }
 die()  { printf '  \xE2\x9C\x97 %s\n' "$1" >&2; cleanup; exit 1; }
@@ -49,10 +52,10 @@ done
 [ "$code" = "200" ] || die "服务未就绪 (/health=$code)；日志见 $LOG"
 ok "/health → 200"
 
-# 受保护端点冒烟（example config 的 auth.api_keys 含 my-secret-key）
+# 受保护端点冒烟（example config 的 auth.api_keys 含 my-secret-key；可用 GATEWAY_TEST_KEY 覆盖）
 curl -s -o /dev/null \
-  -w "  /v1/models (Bearer my-secret-key) → %{http_code}\n" \
-  -H 'Authorization: Bearer my-secret-key' "http://localhost:${PORT}/v1/models" || true
+  -w "  /v1/models (Bearer ${TEST_API_KEY}) → %{http_code}\n" \
+  -H "Authorization: Bearer ${TEST_API_KEY}" "http://localhost:${PORT}/v1/models" || true
 
 cleanup
 

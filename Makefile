@@ -4,6 +4,10 @@
 
 BIN  := gateway-server
 PORT ?= 8080
+# Test API key for the smoke target. Defaults to the example-config key so
+# `make smoke` works out of the box; override with a real key via env/CLI
+# (e.g. `GATEWAY_TEST_KEY=sk-... make smoke`) — never commit a real key.
+GATEWAY_TEST_KEY ?= my-secret-key
 
 .PHONY: help check test fmt lint audit run smoke verify coverage clean
 
@@ -40,7 +44,7 @@ smoke: ## Start server, curl /health + /v1/models, then stop
 	done; \
 	echo "/health -> $$code"; \
 	curl -s -o /dev/null -w "/v1/models -> %{http_code}\n" \
-	  -H 'Authorization: Bearer my-secret-key' http://localhost:$(PORT)/v1/models || true; \
+	  -H 'Authorization: Bearer $(GATEWAY_TEST_KEY)' http://localhost:$(PORT)/v1/models || true; \
 	pkill -9 -f $(BIN) >/dev/null 2>&1 || true; \
 	[ "$$code" = "200" ]
 
