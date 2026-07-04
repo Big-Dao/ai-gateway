@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+
+      "Bash(cargo:*)",
+      "Bash(rustfmt:*)",
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(curl:*)",
+      "Bash(nohup:*)",
+      "Bash(pkill:*)",
+      "Bash(sleep:*)",
+      "Bash(bash:*)",
+      "Bash(make:*)",
+      "Bash(.claude/skills/verify/verify.sh)",
+
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(wc:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(tree:*)",
+      "Bash(echo:*)",
+      "Bash(printf:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(touch:*)",
+      "Bash(diff:*)",
+      "Bash(which:*)",
+      "Bash(command:*)",
+      "Bash(seq:*)",
+      "Bash(sed:*)",
+      "Bash(awk:*)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(tr:*)",
+      "Bash(test:*)",
+      "Bash(chmod:*)"
+    ],
+    "deny": [
+      "Read(config.toml)",
+      "Edit(config.toml)",
+      "Write(config.toml)",
+      "Read(.env)",
+      "Edit(.env)",
+      "Write(.env)",
+      "Edit(Cargo.lock)",
+      "Write(Cargo.lock)",
+
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git rebase -i:*)",
+      "Bash(cargo publish:*)",
+      "Bash(sudo:*)",
+      "Bash(rm -rf /*:*)",
+      "Bash(rm -rf ~:*)",
+      "Bash(rm -rf ~/*:*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/rustfmt-file.sh",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git commit:*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/verify-gate.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
