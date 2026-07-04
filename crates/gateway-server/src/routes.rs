@@ -313,6 +313,7 @@ async fn chat_completions(
             &usage,
             true,
             &tenant_ctx.tenant_id,
+            &tenant_ctx.key_id,
         )
         .await;
 
@@ -340,6 +341,7 @@ async fn chat_completions(
             &usage,
             true,
             &tenant_ctx.tenant_id,
+            &tenant_ctx.key_id,
         )
         .await;
 
@@ -366,6 +368,7 @@ async fn record_metering(
     usage: &Usage,
     success: bool,
     tenant_id: &str,
+    key_id: &str,
 ) {
     let (estimated_cost_cents, cost_alert_threshold_cents) = {
         let config = state.config.read().await;
@@ -384,11 +387,7 @@ async fn record_metering(
             .unwrap_or_default()
             .as_millis() as u64,
         tenant_id: tenant_id.to_string(),
-        // TODO(MVP6): wire real key_id from AuthKey — currently TenantContext
-        // does not carry the authenticated key fingerprint; it is injected by
-        // auth_middleware. Either thread `key_id` through TenantContext or look
-        // it up here via state.auth.verify_by_id(&ctx.key_id).
-        key_id: "_from_routes_".into(),
+        key_id: key_id.to_string(),
         model: model.into(),
         provider: provider_name.into(),
         prompt_tokens: usage.prompt_tokens as u64,
