@@ -67,7 +67,10 @@ impl OllamaProvider {
     ) -> Self {
         Self {
             name: "ollama".into(),
-            client: Client::new(),
+            client: Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("build reqwest client"),
             base_url: base_url.unwrap_or_else(|| "http://localhost:11434".into()),
             extra_headers,
         }
@@ -141,22 +144,22 @@ impl LLMProvider for OllamaProvider {
             .json(&ollama_req)
             .send()
             .await
-            .map_err(|e| GatewayError::UpstreamError(e.to_string()))?;
+            .map_err(|e| GatewayError::upstream(e.to_string()))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             error!(%status, %body, "Ollama upstream error");
-            return Err(GatewayError::UpstreamError(format!(
-                "Ollama {}: {}",
-                status, body
-            )));
+            return Err(GatewayError::upstream_status(
+                status.as_u16(),
+                format!("Ollama {}: {}", status, body),
+            ));
         }
 
         let ollama_resp = resp
             .json::<OllamaResponse>()
             .await
-            .map_err(|e| GatewayError::UpstreamError(e.to_string()))?;
+            .map_err(|e| GatewayError::upstream(e.to_string()))?;
 
         Ok(ChatCompletionResponse {
             id: format!("ollama-{}", uuid::Uuid::new_v4().simple()),
@@ -205,15 +208,15 @@ impl LLMProvider for OllamaProvider {
             .json(&ollama_req)
             .send()
             .await
-            .map_err(|e| GatewayError::UpstreamError(e.to_string()))?;
+            .map_err(|e| GatewayError::upstream(e.to_string()))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::UpstreamError(format!(
-                "Ollama {}: {}",
-                status, body
-            )));
+            return Err(GatewayError::upstream_status(
+                status.as_u16(),
+                format!("Ollama {}: {}", status, body),
+            ));
         }
 
         let stream = resp.bytes_stream();
@@ -247,7 +250,7 @@ impl LLMProvider for OllamaProvider {
                         }
                         None
                     }
-                    Err(e) => Some(Err(GatewayError::UpstreamError(e.to_string()))),
+                    Err(e) => Some(Err(GatewayError::upstream(e.to_string()))),
                 }
             }
         });

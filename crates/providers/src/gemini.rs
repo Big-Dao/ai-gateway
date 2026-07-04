@@ -92,7 +92,10 @@ impl GeminiProvider {
     ) -> Self {
         Self {
             name: "gemini".into(),
-            client: Client::new(),
+            client: Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("build reqwest client"),
             api_key,
             base_url: base_url
                 .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".into()),
@@ -238,22 +241,22 @@ impl LLMProvider for GeminiProvider {
         let resp = req
             .send()
             .await
-            .map_err(|e| GatewayError::UpstreamError(e.to_string()))?;
+            .map_err(|e| GatewayError::upstream(e.to_string()))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             error!(%status, %body, "Gemini upstream error");
-            return Err(GatewayError::UpstreamError(format!(
-                "Gemini {}: {}",
-                status, body
-            )));
+            return Err(GatewayError::upstream_status(
+                status.as_u16(),
+                format!("Gemini {}: {}", status, body),
+            ));
         }
 
         let gemini_resp = resp
             .json::<GeminiResponse>()
             .await
-            .map_err(|e| GatewayError::UpstreamError(e.to_string()))?;
+            .map_err(|e| GatewayError::upstream(e.to_string()))?;
 
         Ok(self.convert_response(gemini_resp, &request.model))
     }
@@ -286,15 +289,15 @@ impl LLMProvider for GeminiProvider {
         let resp = req
             .send()
             .await
-            .map_err(|e| GatewayError::UpstreamError(e.to_string()))?;
+            .map_err(|e| GatewayError::upstream(e.to_string()))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::UpstreamError(format!(
-                "Gemini {}: {}",
-                status, body
-            )));
+            return Err(GatewayError::upstream_status(
+                status.as_u16(),
+                format!("Gemini {}: {}", status, body),
+            ));
         }
 
         let stream = resp.bytes_stream();
@@ -342,7 +345,7 @@ impl LLMProvider for GeminiProvider {
                         }
                         None
                     }
-                    Err(e) => Some(Err(GatewayError::UpstreamError(e.to_string()))),
+                    Err(e) => Some(Err(GatewayError::upstream(e.to_string()))),
                 }
             }
         });

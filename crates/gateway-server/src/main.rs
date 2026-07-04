@@ -119,12 +119,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // requests drain, then exit. SIGINT/SIGTERM typically signal "drain and
     // stop" from orchestrators like Kubernetes.
     axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-            info!("Shutdown signal received, draining in-flight requests...");
-        })
+        .with_graceful_shutdown(shutdown_signal())
         .await?;
 
     info!("Server shut down cleanly");
     Ok(())
+}
+
+/// Wait for SIGINT (Ctrl-C) or SIGTERM (orchestrator termination), then
+/// return so axum stops accepting new connections and drains in-flight
+/// requests. SIGTERM is what Kubernetes actually sends during rolling
+/// updates — handling only SIGINT meant the process was SIGKILLed mid-request
+/// after the grace period, losing in-flight work and un-flushed metering.
+/// (S2 reliability fix.)
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            info!("SIGINT received, draining in-flight requests...");
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        if let Ok(mut s) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            if s.recv().await.is_some() {
+                info!("SIGTERM received, draining in-flight requests...");
+            }
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
 }
