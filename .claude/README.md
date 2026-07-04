@@ -30,7 +30,7 @@ bash .claude/skills/verify/verify.sh
 |---|---|
 | `agents/security-reviewer.md` | 鉴权 / 密钥 / 限流 / RBAC / 租户隔离 / 计费归因 / 密钥泄露 子代理。改了 auth·billing·rate-limit 后、PR 前跑。 |
 | `agents/rust-reviewer.md` | await 持锁 / unwrap panic / 状态码字符串匹配 / dead code / 错误传播 / 内存态并发 子代理。改了并发·状态·错误路径后跑。 |
-| `../.mcp.json` | 团队共享 MCP：**context7**（Axum / reqwest / tracing 等版本敏感文档）。GitHub 操作走已认证的 `gh` CLI（已在白名单）。 |
+| `../.mcp.json` | 团队共享 MCP：**context7**（Axum / reqwest / tracing 等版本敏感文档），**版本锁定** `@upstash/context7-mcp@3.2.2`（避免每次启动 `npx -y` 拉取未审核的最新版，降低供应链风险；升级时人工改版本号并审计）。GitHub 操作走已认证的 `gh` CLI（已在白名单）。 |
 | `../Makefile` | 人/agent 统一入口：`make verify`（= 铁律）、`make smoke`、`make check/test/lint/audit/coverage/run`。`make verify` 委托给 `skills/verify/verify.sh`，单一真源。 |
 
 子代理用法（主面板可并行调度）：
