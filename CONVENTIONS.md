@@ -12,14 +12,19 @@
 
 ### 2. 检查文件归属
 确认你要改的代码**不在别人的 worktree 修改范围内**。
-- MVP 2 (Metering) → `worktrees/mvp2-metering`
-- MVP 3 (Observability) → `worktrees/mvp3-observability`
-- MVP 4 (Providers) → `worktrees/mvp4-providers`
+
+> MVP 0–6 的并行阶段已结束（全部合入 `master`，commit `b2e982a`），下列 worktree 已归档。
+> 若开启新的并行 MVP，按同样约定各自建 `worktrees/mvpN-<topic>`。
+> ~~~
+> - MVP 2 (Metering) → `worktrees/mvp2-metering`
+> - MVP 3 (Observability) → `worktrees/mvp3-observability`
+> - MVP 4 (Providers) → `worktrees/mvp4-providers`
+> ~~~
 
 ### 3. 在每个 worktree 内分别 git 操作
 ```bash
 # 各自 worktree 里
-git checkout mvp2-metering   # 或 mvp3-observability / mvp4-providers
+git checkout mvpN-<topic>   # 例如 mvp2-metering（已归档）
 # ... 开发 ...
 git add -A && git commit -m "..."
 ```
@@ -79,4 +84,4 @@ git add -A && git commit -m "..."
 
 ---
 
-*最后更新: 2026-07-03*
+*最后更新: 2026-07-04 — 标注 MVP 0–6 并行阶段已合入 master（`b2e982a`），worktree 引用归档。*
