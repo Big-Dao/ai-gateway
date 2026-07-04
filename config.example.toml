@@ -39,6 +39,19 @@ enabled = true
 max_capacity = 1000
 ttl_seconds = 300
 
+# ─── Pricing (per-model metering) ───────────────────────────────────
+# When a model has no entry and no default is set, calls are free.
+[pricing]
+default = { input_per_1m = 5.0, output_per_1m = 15.0 }
+
+[pricing.models."gpt-4o"]
+input_per_1m = 2.5
+output_per_1m = 10.0
+
+[pricing.models."claude-sonnet-4-6"]
+input_per_1m = 3.0
+output_per_1m = 15.0
+
 # ─── Authentication ─────────────────────────────────────────────────
 [auth]
 enabled = true

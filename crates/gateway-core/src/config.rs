@@ -14,7 +14,13 @@ pub struct AppConfig {
     pub auth: AuthConfig,
     #[serde(default = "crate::tenant::default_tenants")]
     pub tenants: HashMap<String, crate::tenant::TenantConfig>,
-    /// Platform-wide default rate card (cost per 1M tokens) for metering.
+    /// Platform-wide per-model pricing table (MVP 6). Replaces the legacy
+    /// `rate_config` field; that field is retained for deserialization
+    /// compatibility but the main path should use `pricing.estimate_cost`.
+    #[serde(default)]
+    pub pricing: crate::metering::PricingTable,
+    /// Legacy platform-wide rate card (cost per 1M tokens). Retained for
+    /// deserialization compatibility; new code should prefer `pricing`.
     #[serde(default)]
     pub rate_config: Option<crate::metering::RateCard>,
     /// When set, audit events are appended as JSON lines to this path.

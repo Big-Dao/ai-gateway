@@ -5,26 +5,49 @@ metadata:
   namespace: ai-gateway
 spec:
   groups:
-    - name: ai-gateway.rules
+    - name: gateway-recording
       rules:
-        - alert: AiGatewayHighErrorRate
-          expr: sum(rate(gateway_errors_total[5m])) / sum(rate(gateway_requests_total[5m])) > 0.05
+        # 请求速率
+        - record: gateway:request_rate_1m
+          expr: sum(rate(gateway_requests_total[1m])) by (tenant)
+        # 错误率
+        - record: gateway:error_rate_5m
+          expr: sum(rate(gateway_requests_total{status="error"}[5m])) / sum(rate(gateway_requests_total[5m]))
+
+    - name: gateway-alerts
+      rules:
+        # 高错误率告警
+        - alert: HighErrorRate
+          expr: gateway:error_rate_5m > 0.05
           for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High error rate on gateway ({{ $value | humanizePercentage }})"
+
+        # Circuit Breaker 打开
+        - alert: CircuitBreakerOpen
+          expr: gateway_circuit_breaker_state == 1
+          for: 1m
           labels:
             severity: critical
           annotations:
-            summary: "AI Gateway error rate above 5%"
-        - alert: AiGatewayCircuitBreakerOpen
-          expr: max(gateway_circuit_breaker_state) > 0.5
-          for: 1m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Circuit breaker OPEN for at least one provider"
-        - alert: AiGatewayHighLatency
-          expr: histogram_quantile(0.95, sum(rate(gateway_request_duration_seconds_bucket[5m])) by (le, provider)) > 10
+            summary: "Circuit breaker open for provider {{ $labels.provider }}"
+
+        # 高延迟 P99
+        - alert: HighLatencyP99
+          expr: histogram_quantile(0.99, sum(rate(gateway_request_duration_seconds_bucket[5m])) by (le, provider)) > 5
           for: 5m
           labels:
             severity: warning
           annotations:
-            summary: "p95 latency above 10s"
+            summary: "P99 latency > 5s for provider {{ $labels.provider }}"
+
+        # 成本超阈值（MVP 6 新增）
+        - alert: TenantCostExceeded
+          expr: increase(gateway_tokens_total{kind="prompt"}[1h]) > 1000000
+          for: 1h
+          labels:
+            severity: info
+          annotations:
+            summary: "Tenant {{ $labels.tenant }} exceeded 1M prompt tokens in 1h"

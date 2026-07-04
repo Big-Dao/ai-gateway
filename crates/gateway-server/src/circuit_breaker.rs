@@ -69,7 +69,37 @@ impl CircuitBreaker {
     }
 
     /// Check if a provider is currently allowed to receive requests.
+    ///
+    /// Uses a read lock for the fast path (Closed / HalfOpen / Open-with-unelapsed-cooldown)
+    /// so that concurrent requests for different providers are not serialized.
+    /// Only the rare Open→HalfOpen transition falls through to a write lock.
     pub async fn allow_request(&self, provider_name: &str) -> bool {
+        // Fast path — read lock: concurrent providers can proceed in parallel.
+        {
+            let map = self.inner.read().await;
+            match map.get(provider_name) {
+                // No entry yet ≡ Closed — allow without creating one.
+                None => return true,
+                Some(entry) => match entry.state {
+                    CircuitState::Closed => return true,
+                    CircuitState::HalfOpen => return true,
+                    CircuitState::Open => {
+                        let cooldown_done = entry
+                            .opened_at
+                            .map(|t| Instant::now().duration_since(t) >= self.config.cooldown)
+                            .unwrap_or(false);
+                        if cooldown_done {
+                            // Cooldown elapsed — fall through to upgrade to write lock.
+                        } else {
+                            self.total_rejected.fetch_add(1, Ordering::Relaxed);
+                            return false;
+                        }
+                    }
+                },
+            }
+        }
+
+        // Slow path — write lock: only reached for Open→HalfOpen transition.
         let mut map = self.inner.write().await;
         let now = Instant::now();
 
@@ -82,7 +112,7 @@ impl CircuitBreaker {
                 half_open_successes: 0,
             });
 
-        // Prune old failures outside the window.
+        // Prune stale failures outside the window.
         entry
             .failures
             .retain(|t| now.duration_since(*t) < self.config.failure_window);
@@ -90,21 +120,19 @@ impl CircuitBreaker {
         match entry.state {
             CircuitState::Closed => true,
             CircuitState::Open => {
-                // Check if cooldown has elapsed → transition to HalfOpen.
-                if let Some(opened_at) = entry.opened_at {
-                    if now.duration_since(opened_at) >= self.config.cooldown {
-                        debug!(
-                            provider = provider_name,
-                            "Circuit breaker transitioning to HalfOpen"
-                        );
-                        entry.state = CircuitState::HalfOpen;
-                        entry.half_open_successes = 0;
-                        true
-                    } else {
-                        self.total_rejected.fetch_add(1, Ordering::Relaxed);
-                        false
-                    }
+                if entry
+                    .opened_at
+                    .map_or(false, |t| now.duration_since(t) >= self.config.cooldown)
+                {
+                    debug!(
+                        provider = provider_name,
+                        "Circuit breaker transitioning to HalfOpen"
+                    );
+                    entry.state = CircuitState::HalfOpen;
+                    entry.half_open_successes = 0;
+                    true
                 } else {
+                    self.total_rejected.fetch_add(1, Ordering::Relaxed);
                     false
                 }
             }
@@ -208,5 +236,145 @@ impl CircuitBreaker {
     /// Total requests rejected due to open circuits.
     pub fn total_rejected(&self) -> u64 {
         self.total_rejected.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn inject_state(
+        &self,
+        provider_name: &str,
+        state: CircuitState,
+        failures: usize,
+        opened_at: Option<Instant>,
+    ) {
+        let mut map = self.inner.write().await;
+        let mut entry = BreakerInner {
+            state,
+            failures: Vec::new(),
+            opened_at,
+            half_open_successes: 0,
+        };
+        // Simulate historical failures for state Closed→Open testing.
+        for i in 0..failures {
+            entry
+                .failures
+                .push(Instant::now() - Duration::from_secs(i as u64 + 1));
+        }
+        map.insert(provider_name.to_string(), entry);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config() -> CircuitBreakerConfig {
+        CircuitBreakerConfig {
+            failure_window: Duration::from_secs(30),
+            failure_threshold: 3,
+            cooldown: Duration::from_secs(60),
+            half_open_success_threshold: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_closed_to_open_on_threshold() {
+        let cb = CircuitBreaker::new(test_config());
+        let p = "p1";
+
+        // Initially closed.
+        assert_eq!(cb.state(p).await, CircuitState::Closed);
+        assert!(cb.allow_request(p).await);
+
+        // Record failures up to threshold.
+        cb.record_failure(p).await;
+        cb.record_failure(p).await;
+        assert_eq!(cb.state(p).await, CircuitState::Closed);
+        cb.record_failure(p).await; // triggers Open
+        assert_eq!(cb.state(p).await, CircuitState::Open);
+        assert!(!cb.allow_request(p).await);
+        assert_eq!(cb.total_rejected(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_open_rejects_all_requests() {
+        let cb = CircuitBreaker::new(test_config());
+        let p = "p2";
+
+        cb.inject_state(p, CircuitState::Open, 0, Some(Instant::now()))
+            .await;
+        assert!(!cb.allow_request(p).await);
+        assert!(!cb.allow_request(p).await);
+        assert_eq!(cb.total_rejected(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_open_to_halfopen_after_cooldown() {
+        let cb = CircuitBreaker::new(test_config());
+        let p = "p3";
+
+        // Inject Open state with `opened_at` far enough in the past.
+        let far_past = Instant::now() - Duration::from_secs(120);
+        cb.inject_state(p, CircuitState::Open, 0, Some(far_past))
+            .await;
+
+        // allow_request sees cooldown elapsed → transitions to HalfOpen.
+        assert!(cb.allow_request(p).await);
+        assert_eq!(cb.state(p).await, CircuitState::HalfOpen);
+    }
+
+    #[tokio::test]
+    async fn test_halfopen_to_closed_on_success() {
+        let cb = CircuitBreaker::new(test_config());
+        let p = "p4";
+
+        cb.inject_state(p, CircuitState::HalfOpen, 0, None).await;
+        assert!(cb.allow_request(p).await);
+
+        cb.record_success(p).await; // threshold = 1, so this closes it.
+        assert_eq!(cb.state(p).await, CircuitState::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_halfopen_to_open_on_failure() {
+        let cb = CircuitBreaker::new(test_config());
+        let p = "p5";
+
+        cb.inject_state(p, CircuitState::HalfOpen, 0, None).await;
+        assert!(cb.allow_request(p).await);
+
+        cb.record_failure(p).await; // probe failed → back to Open
+        assert_eq!(cb.state(p).await, CircuitState::Open);
+        assert!(!cb.allow_request(p).await);
+    }
+
+    #[tokio::test]
+    async fn test_closed_success_clears_failures() {
+        let cb = CircuitBreaker::new(test_config());
+        let p = "p6";
+
+        cb.record_failure(p).await;
+        cb.record_failure(p).await;
+        // Still closed (below threshold).
+        assert_eq!(cb.state(p).await, CircuitState::Closed);
+
+        cb.record_success(p).await;
+        // Failures cleared — adding one more won't trip the breaker.
+        cb.record_failure(p).await;
+        cb.record_failure(p).await;
+        assert_eq!(cb.state(p).await, CircuitState::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_all_states_snapshot() {
+        let cb = CircuitBreaker::new(test_config());
+        cb.inject_state("a", CircuitState::Closed, 0, None).await;
+        cb.inject_state("b", CircuitState::Open, 0, Some(Instant::now()))
+            .await;
+        cb.inject_state("c", CircuitState::HalfOpen, 0, None).await;
+
+        let snap = cb.all_states().await;
+        assert_eq!(snap["a"], CircuitState::Closed);
+        assert_eq!(snap["b"], CircuitState::Open);
+        assert_eq!(snap["c"], CircuitState::HalfOpen);
     }
 }

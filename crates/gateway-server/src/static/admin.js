@@ -99,6 +99,7 @@ function navigateTo(page) {
         providers: '提供商管理',
         apikeys: 'API Key 管理',
         usage: '用量统计',
+        cost: '费用中心',
         config: '系统配置',
         logs: '实时日志'
     };
@@ -108,13 +109,17 @@ function navigateTo(page) {
     loadPageData(page);
 }
 
-function loadPageData(page) {
+async function loadPageData(page) {
     switch (page) {
         case 'dashboard': loadDashboard(); break;
         case 'tenants': loadTenants(); break;
         case 'providers': loadProviders(); break;
         case 'apikeys': loadApiKeys(); break;
         case 'usage': loadUsage(); break;
+        case 'cost':
+            initCostWindowButtons();
+            await loadCostDashboard();
+            break;
         case 'config': loadConfig(); break;
         case 'logs': loadLogs(); break;
     }
@@ -180,10 +185,172 @@ async function loadUsage() {
         document.getElementById('usage-total-requests').textContent = totalReq.toLocaleString();
         document.getElementById('usage-total-tokens').textContent = totalTokens.toLocaleString();
         document.getElementById('usage-total-errors').textContent = totalErrors.toLocaleString();
+
+        renderBillingInfo();
     } catch (e) {
         console.warn('Load usage failed:', e);
         toast('加载用量数据失败: ' + e.message, 'error');
     }
+}
+
+// ─── Billing info block (MVP 6) ───────────────────────────────────
+function renderBillingInfo() {
+    const infoId = 'billing-info';
+    let info = document.getElementById(infoId);
+    if (!info) {
+        info = document.createElement('div');
+        info.id = infoId;
+        info.style.cssText = 'margin-top:24px;padding:16px;background:#f8f9fa;border-radius:8px;border:1px solid #e9ecef;';
+        const usagePage = document.getElementById('page-usage');
+        if (usagePage) usagePage.appendChild(info);
+    }
+
+    const now = new Date();
+    // Start of today (local).
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startStr = startOfToday.toISOString().slice(0, 10);
+    // End of today → start of tomorrow.
+    const startOfTomorrow = new Date(startOfToday.getTime() + 86_400_000);
+    const msLeft = startOfTomorrow.getTime() - now.getTime();
+    const daysLeft = Math.floor(msLeft / 86_400_000);
+
+    info.innerHTML = `
+        <div style="font-weight:600;margin-bottom:8px;">计费周期</div>
+        <div style="color:#666;font-size:14px;">当前计费周期起始: <strong>${startStr}</strong></div>
+        <div style="color:#666;font-size:14px;">距离周期结束: <strong>${daysLeft} 天</strong></div>
+    `;
+
+    // Admin-only reset button. We always render it; non-admin 403s will surface
+    // via toast from `api()`. Keeps the UI logic dependency-free of RBAC state.
+    const btnWrap = document.createElement('div');
+    btnWrap.style.cssText = 'margin-top:12px;';
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-danger btn-sm';
+    btn.textContent = '立即重置计费周期';
+    btn.addEventListener('click', resetBillingWindow);
+    btnWrap.appendChild(btn);
+    info.appendChild(btnWrap);
+}
+
+async function resetBillingWindow() {
+    if (!confirm('确定要重置计费周期吗？将清除所有租户的用量明细与 cost 累计值。')) return;
+    try {
+        await api('/api/admin/billing/reset', { method: 'POST' });
+        toast('计费周期已重置', 'success');
+        loadUsage();
+    } catch (e) {
+        toast('重置失败: ' + e.message, 'error');
+    }
+}
+
+// ─── Cost Dashboard (MVP 6 Step 4) ─────────────────────────────
+let costWindow = '24h';
+
+function currentPeriodProgressDays() {
+    // Returns elapsed days (as a float) of the current cost window so far.
+    // Used by loadCostDashboard() to linearly project end-of-period cost.
+    const now = new Date();
+    if (costWindow === '24h') {
+        // fraction of the current day elapsed (hours + sub-hour)
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        return (now.getTime() - startOfToday.getTime()) / 86_400_000;
+    }
+    if (costWindow === '7d') {
+        // days since start of current week (Sunday = 0)
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        return startOfToday.getDay() + (now.getTime() - startOfToday.getTime()) / 86_400_000;
+    }
+    // 30d — days since start of current month
+    return now.getDate() - 1 + (now.getHours() / 24);
+}
+
+async function loadCostDashboard() {
+    try {
+        const data = await api('/api/admin/costs?window=' + costWindow);
+
+        document.getElementById('cost-total').textContent = (data.total_cost_cents || 0).toFixed(2);
+
+        const periodDays = costWindow === '24h' ? 1 : costWindow === '7d' ? 7 : 30;
+        const elapsed = currentPeriodProgressDays();
+        const projected = elapsed > 0
+            ? (data.total_cost_cents || 0) * periodDays / elapsed
+            : 0;
+        document.getElementById('cost-projected').textContent = projected.toFixed(2);
+
+        document.getElementById('cost-models').textContent =
+            data.per_model ? data.per_model.length : 0;
+
+        renderTenantChart(data.top_tenants || []);
+        renderModelTable(data.per_model || []);
+    } catch (e) {
+        console.warn('Load cost dashboard failed:', e);
+        toast('加载费用数据失败: ' + e.message, 'error');
+    }
+}
+
+function renderTenantChart(topTenants) {
+    const container = document.getElementById('cost-tenant-chart');
+    if (!container) return;
+
+    if (!topTenants.length) {
+        container.innerHTML = '<div class="empty-state">暂无数据</div>';
+        return;
+    }
+
+    const maxCost = Math.max(...topTenants.map(t => t.total_cost_cents || 0), 1);
+    const colors = ['#6366f1', '#8b5cf6', '#a78bfa', '#c084fc', '#e879f9'];
+
+    container.innerHTML = topTenants.map((t, i) => {
+        const pct = ((t.total_cost_cents || 0) / maxCost) * 100;
+        return `
+            <div class="chart-bar">
+                <span class="chart-bar-label" title="${escHtml(t.tenant_id)}">${escHtml(t.tenant_id)}</span>
+                <div class="chart-bar-track">
+                    <div class="chart-bar-fill" style="width: ${pct}%; background: ${colors[i % colors.length]}"></div>
+                </div>
+                <span class="chart-bar-value">${(t.total_cost_cents || 0).toFixed(2)}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderModelTable(perModel) {
+    const tbody = document.getElementById('cost-model-tbody');
+    if (!tbody) return;
+
+    if (!perModel.length) {
+        tbody.innerHTML = '<tr><td colspan="4">暂无数据</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = perModel.map(m => `
+        <tr>
+            <td>${escHtml(m.model)}</td>
+            <td>${(m.cost_cents || 0).toFixed(2)}</td>
+            <td>${(m.prompt_tokens || 0).toLocaleString()}</td>
+            <td>${(m.completion_tokens || 0).toLocaleString()}</td>
+        </tr>
+    `).join('');
+}
+
+function initCostWindowButtons() {
+    document.querySelectorAll('.window-btn').forEach(btn => {
+        // Avoid registering duplicate listeners on repeated page visits
+        if (btn.dataset.costBound) return;
+        btn.dataset.costBound = '1';
+        btn.addEventListener('click', () => {
+            const w = btn.dataset.window;
+            if (w === costWindow) return;
+            costWindow = w;
+            document.querySelectorAll('.window-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            loadCostDashboard();
+        });
+    });
+    // Sync active button class with current state (e.g. after page revisit)
+    document.querySelectorAll('.window-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.window === costWindow);
+    });
 }
 
 async function saveRateCard() {

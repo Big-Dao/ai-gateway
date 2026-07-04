@@ -157,6 +157,77 @@ async fn mvp0_rate_limit_small() {
     }
 }
 
+// ─── Auth middleware negative cases (T3) ─────────────────────────────
+
+#[tokio::test]
+async fn mvp0_auth_missing_header_returns_401() {
+    let server = TestServer::spawn(&["test-key-123"]).await;
+    let resp = reqwest::get(url(&server, "/v1/models"))
+        .await
+        .expect("request");
+    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn mvp0_auth_empty_bearer_returns_401() {
+    let server = TestServer::spawn(&["test-key-123"]).await;
+    let resp = reqwest::Client::new()
+        .get(url(&server, "/v1/models"))
+        .bearer_auth("")
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn mvp0_auth_wrong_scheme_returns_401() {
+    let server = TestServer::spawn(&["test-key-123"]).await;
+    let resp = reqwest::Client::new()
+        .get(url(&server, "/v1/models"))
+        .header("Authorization", "Basic dGVzdA==")
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn mvp0_auth_unknown_key_returns_401() {
+    let server = TestServer::spawn(&["test-key-123"]).await;
+    let resp = reqwest::Client::new()
+        .get(url(&server, "/v1/models"))
+        .bearer_auth("this-key-does-not-exist")
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn mvp0_auth_malformed_bearer_no_space_returns_401() {
+    let server = TestServer::spawn(&["test-key-123"]).await;
+    let resp = reqwest::Client::new()
+        .get(url(&server, "/v1/models"))
+        .header("Authorization", "BearerNoSpace")
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn mvp0_auth_disabled_allows_anonymous() {
+    // Spawn with auth disabled — any request should pass through.
+    let server =
+        TestServer::spawn_with(&["test-key-123"], &[("AUTH__ENABLED", "false".to_string())]).await;
+    let resp = reqwest::get(url(&server, "/v1/models"))
+        .await
+        .expect("request");
+    // Not 401 — auth is off, so the request reaches the handler.
+    assert_ne!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+}
+
 #[tokio::test]
 async fn mvp0_request_id_header() {
     let api_key = "test-key-123";

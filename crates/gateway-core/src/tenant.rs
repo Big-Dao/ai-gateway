@@ -106,6 +106,11 @@ pub struct TenantConfig {
     pub allowed_providers: Option<Vec<String>>,
     #[serde(default)]
     pub allowed_models: Option<Vec<String>>,
+    /// Cost threshold (in cents) that, when crossed within the current billing
+    /// window, triggers a one-shot `tracing::warn!` alert. `None` disables the
+    /// alert for this tenant (default).
+    #[serde(default)]
+    pub cost_alert_threshold_cents: Option<f64>,
 }
 
 impl Default for TenantConfig {
@@ -114,6 +119,7 @@ impl Default for TenantConfig {
             quotas: TenantQuotas::default(),
             allowed_providers: None,
             allowed_models: None,
+            cost_alert_threshold_cents: None,
         }
     }
 }

@@ -1,0 +1,37 @@
+replicaCount: 2
+
+image:
+  repository: ai-gateway
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+auth:
+  existingSecret: "gateway-auth-keys"
+
+pricing:
+  defaultRate:
+    inputPer1m: 5.0
+    outputPer1m: 15.0
+
+config:
+  server:
+    host: "0.0.0.0"
+    port: 8080
+  rateLimit:
+    requestsPerMinute: 60
+  cache:
+    enabled: true
+    maxCapacity: 1000
+    ttlSeconds: 300

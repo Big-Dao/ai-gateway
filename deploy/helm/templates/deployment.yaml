@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ai-gateway.fullname" . }}
+  labels:
+    {{- include "ai-gateway.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ai-gateway.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ai-gateway.selectorLabels" . | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.service.port }}"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: CONFIG_PATH
+              value: /config/config.toml
+            - name: RUST_LOG
+              value: info
+          envFrom:
+            - secretRef:
+                name: {{ .Values.auth.existingSecret }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ai-gateway.fullname" . }}-config

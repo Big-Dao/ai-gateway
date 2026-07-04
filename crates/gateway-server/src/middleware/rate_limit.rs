@@ -21,7 +21,7 @@ use std::{
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tracing::warn;
 
 use gateway_core::error::GatewayError;
@@ -178,10 +178,10 @@ const UNLIMITED_PATHS: &[&str] = &["/healthz", "/readyz", "/deep-health", "/heal
 /// Per-tenant rate-limiter state.
 ///
 /// Each tenant gets its own [`TokenBucket`]; the map is keyed by tenant id
-/// and protected by a `Mutex` — the MVP maintains a small number of tenants
-/// so the lock is uncontended in practice.
+/// and protected by an `RwLock` so concurrent reads from different tenants
+/// don't serialize on a single `Mutex`.
 pub struct RateLimiter {
-    buckets: Mutex<HashMap<String, Arc<TokenBucket>>>,
+    buckets: RwLock<HashMap<String, Arc<TokenBucket>>>,
     /// Atomic so the admin API can update it at runtime via `&self`.
     default_rpm: AtomicU32,
 }
@@ -189,7 +189,7 @@ pub struct RateLimiter {
 impl RateLimiter {
     pub fn new(default_rpm: u32) -> Self {
         Self {
-            buckets: Mutex::new(HashMap::new()),
+            buckets: RwLock::new(HashMap::new()),
             default_rpm: AtomicU32::new(default_rpm),
         }
     }
@@ -201,13 +201,26 @@ impl RateLimiter {
     }
 
     /// Get (or lazily create) the bucket for a tenant.
+    ///
+    /// Hot path: `read()` lets many tenants look up their buckets
+    /// concurrently; only a cache miss upgrades to `write()` for the
+    /// brief insert window.
     async fn bucket_for(&self, tenant_id: &str) -> Arc<TokenBucket> {
-        let mut map = self.buckets.lock().await;
+        // Fast path — read-mostly, no serialization across tenants.
+        {
+            let map = self.buckets.read().await;
+            if let Some(b) = map.get(tenant_id) {
+                return b.clone();
+            }
+        }
+        // Slow path — upgrade to write only to insert a brand-new bucket.
+        let rpm = self.default_rpm.load(Ordering::Relaxed);
+        let bucket = Arc::new(TokenBucket::new(rpm));
+        let mut map = self.buckets.write().await;
+        // Double-check: another writer may have inserted while we waited.
         if let Some(b) = map.get(tenant_id) {
             return b.clone();
         }
-        let rpm = self.default_rpm.load(Ordering::Relaxed);
-        let bucket = Arc::new(TokenBucket::new(rpm));
         map.insert(tenant_id.to_string(), bucket.clone());
         bucket
     }

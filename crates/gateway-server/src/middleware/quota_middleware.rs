@@ -65,24 +65,8 @@ pub async fn quota_middleware(
         return error_response(violation.into());
     }
 
-    // Record that a request happened
-    state
-        .metering
-        .record(crate::metrics::metering::MeteringEvent {
-            timestamp_ms: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64,
-            tenant_id,
-            key_id: "_unknown_".into(),
-            model: "_unknown_".into(),
-            provider: "_unknown_".into(),
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            status: crate::metrics::metering::RequestStatus::Success,
-            estimated_cost_cents: 0.0,
-        })
-        .await;
+    // Record that a request happened (lightweight path — no MeteringEvent placeholder)
+    state.metering.record_request(&tenant_id, 0, 0).await;
 
     next.run(request).await
 }

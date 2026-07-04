@@ -43,6 +43,10 @@
                     <span class="nav-icon">📋</span>
                     <span>实时日志</span>
                 </li>
+                <li class="nav-item" data-page="cost">
+                    <span class="nav-icon">💰</span>
+                    <span class="nav-label">费用中心</span>
+                </li>
             </ul>
             <div class="sidebar-footer">
                 <span>v0.1.0</span>
@@ -288,6 +292,26 @@
                         </form>
                     </div>
                 </div>
+            </section>
+
+            <!-- Cost Page (MVP 6 Step 4 — Cost Dashboard) -->
+            <section class="page" id="page-cost">
+                <h2 style="margin-bottom:1rem">💰 费用中心</h2>
+                <div class="cost-window-bar">
+                    <button class="window-btn active" data-window="24h">24小时</button>
+                    <button class="window-btn" data-window="7d">7天</button>
+                    <button class="window-btn" data-window="30d">30天</button>
+                </div>
+                <div class="stat-cards" style="margin:1rem 0">
+                    <div class="stat-card"><div class="stat-label">总成本</div><div class="stat-value" id="cost-total">—</div></div>
+                    <div class="stat-card"><div class="stat-label">本月预估</div><div class="stat-value" id="cost-projected">—</div></div>
+                    <div class="stat-card"><div class="stat-label">活跃模型</div><div class="stat-value" id="cost-models">—</div></div>
+                </div>
+                <h3>Top 租户成本</h3>
+                <div id="cost-tenant-chart" class="chart-bar-container"></div>
+                <h3 style="margin-top:1.5rem">模型成本明细</h3>
+                <table class="data-table"><thead><tr><th>模型</th><th>成本 (cents)</th><th>Prompt tokens</th><th>Completion tokens</th></tr></thead>
+                <tbody id="cost-model-tbody"><tr><td colspan="4">暂无数据</td></tr></tbody></table>
             </section>
 
             <!-- Logs Page -->

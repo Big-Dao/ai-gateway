@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use sha2::Sha256;
@@ -62,19 +64,31 @@ impl ApiKeyEntry {
 
     pub fn verify(&self, plaintext_key: &str) -> bool {
         let computed = Self::compute_hash(&self.salt, plaintext_key);
-        // fallback: naive compare; upgrade to subtle in MVP 1
-        computed == self.hash
+        // Constant-time comparison to prevent timing side-channel attacks.
+        use subtle::ConstantTimeEq;
+        computed.as_bytes().ct_eq(self.hash.as_bytes()).into()
     }
 }
 
 /// Manages API key lifecycle in memory.
+///
+/// Lookups by `key_id` (the HMAC fingerprint stored in each entry) are
+/// O(1) via the `by_id` index. The brute-force `verify(plaintext_key)`
+/// path is still O(N) because each candidate must be HMAC'd before
+/// comparison — that cost is inherent, not a data-structure problem.
 pub struct ApiKeyStore {
     entries: Vec<ApiKeyEntry>,
+    /// Reverse index: key_id → position in `entries`. Kept in sync
+    /// with `entries` by all mutation methods.
+    by_id: HashMap<String, usize>,
 }
 
 impl ApiKeyStore {
     pub fn new() -> Self {
-        Self { entries: vec![] }
+        Self {
+            entries: vec![],
+            by_id: HashMap::new(),
+        }
     }
 
     pub fn from_plaintext_keys(keys: &[String]) -> Self {
@@ -82,7 +96,7 @@ impl ApiKeyStore {
             .iter()
             .map(|k| ApiKeyEntry::new(k, "default", "developer"))
             .collect();
-        Self { entries }
+        Self::from_entries(entries)
     }
 
     /// Build from structured (key, tenant, role) tuples.
@@ -91,10 +105,21 @@ impl ApiKeyStore {
             .iter()
             .map(|(k, t, r)| ApiKeyEntry::new(k, t, r))
             .collect();
-        Self { entries }
+        Self::from_entries(entries)
+    }
+
+    /// Internal helper: build a store + index from a list of entries.
+    fn from_entries(entries: Vec<ApiKeyEntry>) -> Self {
+        let mut by_id = HashMap::with_capacity(entries.len());
+        for (i, e) in entries.iter().enumerate() {
+            by_id.insert(e.key_id.clone(), i);
+        }
+        Self { entries, by_id }
     }
 
     pub fn add(&mut self, entry: ApiKeyEntry) {
+        let i = self.entries.len();
+        self.by_id.insert(entry.key_id.clone(), i);
         self.entries.push(entry);
     }
 
@@ -102,13 +127,20 @@ impl ApiKeyStore {
         self.entries.iter().find(|e| e.verify(plaintext_key))
     }
 
-    /// Look up an entry by its key_id fingerprint.
+    /// Look up an entry by its key_id fingerprint. O(1).
     pub fn verify_by_id(&self, key_id: &str) -> Option<&ApiKeyEntry> {
-        self.entries.iter().find(|e| e.key_id == key_id)
+        self.by_id.get(key_id).and_then(|&i| self.entries.get(i))
     }
 
     pub fn remove_by_id(&mut self, key_id: &str) {
-        self.entries.retain(|e| e.key_id != key_id)
+        if self.by_id.remove(key_id).is_some() {
+            self.entries.retain(|e| e.key_id != key_id);
+            // Rebuild the index because `retain` shifted positions.
+            self.by_id.clear();
+            for (i, e) in self.entries.iter().enumerate() {
+                self.by_id.insert(e.key_id.clone(), i);
+            }
+        }
     }
 
     pub fn list_ids(&self) -> Vec<String> {

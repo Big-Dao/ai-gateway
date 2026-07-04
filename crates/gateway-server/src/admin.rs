@@ -1,11 +1,12 @@
 use axum::{
-    extract::{Extension, Json, Path, State},
+    extract::{Extension, Json, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
     Router,
 };
 use gateway_core::audit::AuditAction;
+use gateway_core::metering::CostSummary;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -52,6 +53,10 @@ pub struct UpdateQuotaRequest {
     pub max_rpd: Option<u64>,
     pub max_tpm: Option<u64>,
     pub max_tpd: Option<u64>,
+    /// Per-billing-window cost threshold (cents). When a tenant's cumulative
+    /// cost crosses this value, the metering service emits a one-shot warn
+    /// event. Passing `Some(..)` arms the alert; `None` leaves it untouched.
+    pub cost_alert_threshold_cents: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,6 +84,16 @@ pub struct UpdateCacheConfigRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateRateLimitRequest {
     pub requests_per_minute: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CostsParams {
+    /// Time window: `24h` (default), `7d`, or `30d`.
+    #[serde(default)]
+    pub window: Option<String>,
+    /// Tenant filter — only honoured for global admins.
+    #[serde(default)]
+    pub tenant: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -132,6 +147,8 @@ pub fn admin_router() -> Router<Arc<AppState>> {
         .route("/tenants/{tenant_id}", delete(delete_tenant))
         .route("/logs", get(get_logs))
         .route("/circuit-breaker", get(get_circuit_breaker_status))
+        .route("/costs", get(get_costs))
+        .route("/billing/reset", post(post_billing_reset))
 }
 
 // ─── Handlers ───────────────────────────────────────────────────────
@@ -525,6 +542,9 @@ async fn update_quota(
     if let Some(tpd) = req.max_tpd {
         tenant.quotas.max_tpd = tpd;
     }
+    if let Some(threshold) = req.cost_alert_threshold_cents {
+        tenant.cost_alert_threshold_cents = Some(threshold);
+    }
 
     info!(tenant = %tenant_id, "Admin: updated tenant quotas");
 
@@ -838,9 +858,115 @@ async fn update_rate_card(
     Ok(Json(resp))
 }
 
+/// POST /api/admin/billing/reset — clear all cost counters and detail
+/// events. Bound to the current (daily) billing window: request and token
+/// tallies are intentionally left untouched since they are cumulative, not
+/// per-cycle metrics.
+///
+/// RBAC: only global admin can trigger a reset.
+async fn post_billing_reset(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_key): Extension<AuthKey>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // RBAC: only global admin may reset the billing window.
+    require_role(&state, &auth_key, Role::ADMIN)
+        .await
+        .map_err(ApiError)?;
+
+    let caller_role = {
+        let store = state.auth_store.read().await;
+        store
+            .verify_by_id(&auth_key.0)
+            .map(|e| Role::from_str(&e.role))
+            .unwrap_or(Role::DEVELOPER)
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    state.metering.reset_billing_window().await;
+
+    // Emit audit: BillingReset. The action is intentionally dedicated so the
+    // audit stream can be filtered for billing lifecycle events.
+    state
+        .emit_audit(
+            AuditAction::BillingReset,
+            gateway_core::audit::AuditActor {
+                id: auth_key.0.clone(),
+                role: caller_role,
+                ip: None,
+                context: Some(serde_json::json!({ "reset_at_ms": now_ms })),
+            },
+            "default",
+            Some("billing/reset"),
+            true,
+            None,
+        )
+        .await;
+
+    info!(actor = %auth_key.0, "admin: billing window reset");
+
+    Ok(Json(serde_json::json!({"status": "reset"})))
+}
+
 /// GET /api/admin/config/rate-card — view current pricing.
 ///
 /// RBAC: any authenticated user.
+/// GET /api/admin/costs?window=24h|7d|30d&tenant=<id>
+///
+/// RBAC: any authenticated user. Non-admin callers are implicitly scoped to
+/// their own tenant — the `?tenant=` query param is only honoured for global
+/// admins.
+async fn get_costs(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_key): Extension<AuthKey>,
+    Query(params): Query<CostsParams>,
+) -> Result<Json<CostSummary>, ApiError> {
+    // RBAC: any authenticated developer can view costs.
+    let caller_tenant = require_role(&state, &auth_key, Role::DEVELOPER)
+        .await
+        .map_err(ApiError)?;
+
+    let is_admin = matches!(
+        state
+            .auth_store
+            .read()
+            .await
+            .verify_by_id(&auth_key.0)
+            .map(|e| Role::from_str(&e.role)),
+        Some(role) if role >= Role::ADMIN
+    );
+
+    // Non-admins must always be scoped to their own tenant; explicit
+    // ?tenant= is an admin-only affordance.
+    let tenant_filter = if is_admin {
+        params.tenant.as_deref()
+    } else {
+        Some(caller_tenant.as_str())
+    };
+
+    // Parse window into (ms, human-readable label).
+    let (window_ms, window_label): (u64, &str) = match params.window.as_deref() {
+        Some("7d") => (7 * 24 * 60 * 60 * 1000, "7d"),
+        Some("30d") => (30 * 24 * 60 * 60 * 1000, "30d"),
+        _ => (24 * 60 * 60 * 1000, "24h"),
+    };
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let mut summary = state
+        .metering
+        .cost_summary(window_ms, now_ms, tenant_filter)
+        .await;
+    summary.window = window_label.to_string();
+
+    Ok(Json(summary))
+}
+
 async fn get_rate_card(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let config = state.config.read().await;
     match &config.rate_config {

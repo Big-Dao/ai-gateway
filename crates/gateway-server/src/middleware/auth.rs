@@ -23,16 +23,11 @@ fn error_response(e: GatewayError) -> Response {
     (status, axum::Json(e.to_error_response())).into_response()
 }
 
-/// Paths excluded from auth — K8s load balancers, health monitors, our
-/// own smoke tests, and the Admin UI (page + static assets) hit these unauthenticated.
+/// Paths excluded from auth — K8s load balancers, health monitors, and our
+/// own smoke tests. The Admin UI (page + static assets) now REQUIRES a valid
+/// Bearer token; see S2 security fix.
 const UNAUTHENTICATED_PATHS: &[&str] =
     &["/healthz", "/readyz", "/deep-health", "/health", "/metrics"];
-const UNAUTHENTICATED_PREFIXES: &[&str] = &[
-    // Admin JS/CSS assets don't contain secrets, so they're served without
-    // auth. The HTML page at /admin and all /api/admin/* REST endpoints
-    // require a valid Bearer token.
-    "/admin/static",
-];
 
 /// Authentication middleware — validates the Bearer token against the HMAC store.
 pub async fn auth_middleware(
@@ -40,17 +35,13 @@ pub async fn auth_middleware(
     mut request: Request,
     next: Next,
 ) -> Response {
-    // Skip auth if disabled
-    let enabled = {
-        let config = state.config.read().await;
-        config.auth.enabled
-    };
+    // Skip auth if disabled — atomic read, no RwLock contention on the hot path (H3).
+    let enabled = state
+        .auth_enabled
+        .load(std::sync::atomic::Ordering::Relaxed);
 
     let path = request.uri().path();
-    if !enabled
-        || UNAUTHENTICATED_PATHS.iter().any(|p| path == *p)
-        || UNAUTHENTICATED_PREFIXES.iter().any(|p| path.starts_with(p))
-    {
+    if !enabled || UNAUTHENTICATED_PATHS.iter().any(|p| path == *p) {
         return next.run(request).await;
     }
 

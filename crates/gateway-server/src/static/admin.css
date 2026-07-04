@@ -807,3 +807,9 @@ body {
     outline: none;
     border-color: var(--accent);
 }
+
+/* ─── Cost Dashboard (MVP 6 Step 4) ───────────────────────────── */
+.cost-window-bar { display:flex; gap:0.5rem; margin:1rem 0; }
+.window-btn { padding:0.4rem 0.8rem; border:1px solid var(--border); background:var(--bg-card); color:var(--text-secondary); border-radius:6px; cursor:pointer; font-size:0.85rem; transition:var(--transition); }
+.window-btn:hover { border-color:var(--accent); color:var(--text-primary); }
+.window-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }

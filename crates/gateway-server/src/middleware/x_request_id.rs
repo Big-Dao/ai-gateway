@@ -20,12 +20,17 @@ use uuid::Uuid;
 pub struct RequestId(pub String);
 
 pub async fn x_request_id_middleware(request: Request, next: Next) -> Response {
-    let req_id = request
+    // Accept the client-supplied id only if it parses as a valid UUIDv4;
+    // otherwise mint a fresh one to prevent log/response-header injection.
+    let raw = request
         .headers()
         .get("x-request-id")
         .and_then(|v| v.to_str().ok())
-        .map(String::from)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+        .unwrap_or("");
+    let req_id = match Uuid::parse_str(raw) {
+        Ok(u) => u.to_string(),
+        Err(_) => Uuid::new_v4().to_string(),
+    };
 
     let mut resp = next.run(request).await;
 

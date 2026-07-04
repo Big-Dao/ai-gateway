@@ -12,7 +12,7 @@ pub use audit::{
 };
 pub use config::AppConfig;
 pub use error::GatewayError;
-pub use metering::RateCard;
+pub use metering::{CostBreakdown, CostSummary, ModelCost, ModelRate, PricingTable, RateCard};
 pub use provider::LLMProvider;
 pub use tenant::{Role, TenantContext};
 pub use types::*;

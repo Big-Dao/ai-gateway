@@ -35,6 +35,9 @@ pub enum AuditAction {
 
     // Quota
     QuotaUpdate,
+
+    // Billing
+    BillingReset,
 }
 
 impl fmt::Display for AuditAction {
@@ -55,6 +58,7 @@ impl fmt::Display for AuditAction {
             AuditAction::ProviderDelete => "provider.delete",
             AuditAction::ConfigUpdate => "config.update",
             AuditAction::QuotaUpdate => "quota.update",
+            AuditAction::BillingReset => "billing.reset",
         };
         write!(f, "{}", s)
     }
@@ -80,6 +84,7 @@ impl std::str::FromStr for AuditAction {
             "provider.delete" => Ok(AuditAction::ProviderDelete),
             "config.update" => Ok(AuditAction::ConfigUpdate),
             "quota.update" => Ok(AuditAction::QuotaUpdate),
+            "billing.reset" => Ok(AuditAction::BillingReset),
             other => Err(format!("Unknown audit action: {}", other)),
         }
     }

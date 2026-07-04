@@ -357,8 +357,8 @@ async fn chat_completions(
 
 /// Record a metering event for a completed LLM request.
 ///
-/// The platform-wide rate card is looked up from AppConfig (if present);
-/// when absent `estimated_cost_cents` is 0.0 (free tier).
+/// Cost is looked up from `AppConfig.pricing` by `model`; unknown models or
+/// an empty table fall back to 0.0 (free).
 async fn record_metering(
     state: &AppState,
     provider_name: &str,
@@ -367,13 +367,15 @@ async fn record_metering(
     success: bool,
     tenant_id: &str,
 ) {
-    let estimated_cost_cents = {
+    let (estimated_cost_cents, cost_alert_threshold_cents) = {
         let config = state.config.read().await;
-        config
-            .rate_config
-            .as_ref()
-            .map(|card| card.estimate_cost(usage) as f64)
-            .unwrap_or(0.0)
+        (
+            config.pricing.estimate_cost(model, usage),
+            config
+                .tenants
+                .get(tenant_id)
+                .and_then(|t| t.cost_alert_threshold_cents),
+        )
     };
 
     let event = MeteringEvent {
@@ -382,6 +384,10 @@ async fn record_metering(
             .unwrap_or_default()
             .as_millis() as u64,
         tenant_id: tenant_id.to_string(),
+        // TODO(MVP6): wire real key_id from AuthKey — currently TenantContext
+        // does not carry the authenticated key fingerprint; it is injected by
+        // auth_middleware. Either thread `key_id` through TenantContext or look
+        // it up here via state.auth.verify_by_id(&ctx.key_id).
         key_id: "_from_routes_".into(),
         model: model.into(),
         provider: provider_name.into(),
@@ -395,7 +401,10 @@ async fn record_metering(
         estimated_cost_cents,
     };
 
-    state.metering.record(event).await;
+    state
+        .metering
+        .record(event, cost_alert_threshold_cents)
+        .await;
 }
 
 /// Compute a cache key from the request (model + messages).

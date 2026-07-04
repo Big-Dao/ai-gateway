@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
@@ -39,6 +40,9 @@ pub struct AppState {
     pub provider_instances: RwLock<HashMap<String, Arc<dyn LLMProvider>>>,
     /// Response cache.
     pub cache: moka::future::Cache<String, ChatCompletionResponse>,
+    /// Whether auth is enabled. Atomic so the middleware's hot path can check
+    /// it without acquiring the config RwLock (H3).
+    pub auth_enabled: AtomicBool,
     /// Usage metrics.
     pub metrics: Mutex<Metrics>,
     /// Per-provider circuit breaker.
@@ -141,6 +145,14 @@ impl AppState {
 
         let rpm = config.rate_limit.requests_per_minute;
         let rate_limiter = Arc::new(crate::middleware::rate_limit::RateLimiter::new(rpm));
+        let auth_enabled = AtomicBool::new(config.auth.enabled);
+        let metering = MeteringService::new();
+
+        // MVP 6 (billing reset): clear any pre-existing cost data on startup so
+        // each boot begins a fresh metering window. Request / token tallies
+        // are intentionally preserved — they are cumulative, not per-cycle.
+        metering.reset_billing_window().await;
+        tracing::info!(target: "billing", "billing window reset on startup");
 
         Ok(Self {
             config: RwLock::new(config),
@@ -148,10 +160,11 @@ impl AppState {
             providers: RwLock::new(providers),
             provider_instances: RwLock::new(provider_instances),
             cache,
+            auth_enabled,
             metrics: Mutex::new(Metrics::default()),
             circuit_breaker,
             rate_limiter,
-            metering: MeteringService::new(),
+            metering,
             quota: QuotaEngine::new(),
             prometheus: PrometheusExporter::new(),
             audit_log: Arc::new(NoopAuditWriter),
@@ -174,7 +187,15 @@ impl AppState {
 
     /// Emit an audit event. Convenience wrapper that swallows write errors
     /// (audit must never break the request path).
-    pub async fn emit_audit(&self, action: AuditAction, actor: AuditActor, tenant: impl Into<String>, resource: Option<&str>, success: bool, error: Option<&str>) {
+    pub async fn emit_audit(
+        &self,
+        action: AuditAction,
+        actor: AuditActor,
+        tenant: impl Into<String>,
+        resource: Option<&str>,
+        success: bool,
+        error: Option<&str>,
+    ) {
         let mut event = AuditEvent::new(action, actor, tenant);
         if let Some(r) = resource {
             event = event.with_resource(r);
