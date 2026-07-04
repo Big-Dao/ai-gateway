@@ -66,3 +66,30 @@ crates/
 - [ ] 环境变量前缀拼写 `AI_GATERARY` → `AI_GATEWAY`
 - [ ] dead code 清理
 - [ ] Admin UI 认证流程（已完成基础修复，待验证）
+
+---
+
+## 铁律落地（harness，机器化）
+
+> 本节由 `.claude/` harness 提供。铁律的三步已封装成一条命令，不再靠自觉。
+
+**声明任何 Rust 改动"完成 / 已修复"之前，或提交含 `.rs` 的改动之前，必须先跑：**
+
+```bash
+make verify          # 等价：bash .claude/skills/verify/verify.sh
+```
+
+它依次执行 `cargo check` → `cargo test` → 启动服务 curl E2E，全过才写 `target/.verified`（15 分钟内有效）。
+`.claude/hooks/verify-gate.sh` 会在 `git commit` 含 `.rs` 时强制要求该标记新鲜，否则拦下并把原因回灌。
+
+### Definition of Done（自查，缺一不可）
+- [ ] `make verify` 三步全过，`target/.verified` 已刷新
+- [ ] 对照任务清单 / 已知问题清单逐项打勾
+- [ ] 若改了鉴权 / 计费 / 限流 —— 跑过 `.claude/agents/security-reviewer.md` 子代理
+- [ ] 若改了并发 / 状态 / 错误路径 —— 跑过 `.claude/agents/rust-reviewer.md` 子代理
+
+违反以上 = 没有完成，不准报告"已修复 / 已完成"。
+
+### 自主工作队列
+未勾选的「已知问题」即自主 session 的待办：启动时读清单，挑下一项，`make verify` 通过后再交付。
+（harness 细节见 `.claude/README.md`。）

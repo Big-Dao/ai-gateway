@@ -23,3 +23,19 @@ bash .claude/skills/verify/verify.sh
 - 权限提示仍频繁？检查 `/permissions`，或在 `.claude/settings.local.json` 补个人 allow。
 - 铁律闸误拦（例如只改了文档却被拦）？只有暂存了 `.rs` 才会触发；纯文档提交不受影响。
 - 权限规则语法以当前 Claude Code 版本为准（本文件用 `Bash(cmd:*)` 前缀写法）。
+
+## P1 扩展
+
+| 路径 | 作用 |
+|---|---|
+| `agents/security-reviewer.md` | 鉴权 / 密钥 / 限流 / RBAC / 租户隔离 / 计费归因 / 密钥泄露 子代理。改了 auth·billing·rate-limit 后、PR 前跑。 |
+| `agents/rust-reviewer.md` | await 持锁 / unwrap panic / 状态码字符串匹配 / dead code / 错误传播 / 内存态并发 子代理。改了并发·状态·错误路径后跑。 |
+| `../.mcp.json` | 团队共享 MCP：**context7**（Axum / reqwest / tracing 等版本敏感文档）。GitHub 操作走已认证的 `gh` CLI（已在白名单）。 |
+| `../Makefile` | 人/agent 统一入口：`make verify`（= 铁律）、`make smoke`、`make check/test/lint/audit/coverage/run`。`make verify` 委托给 `skills/verify/verify.sh`，单一真源。 |
+
+子代理用法（主面板可并行调度）：
+```bash
+# 在 worktree 里
+claude /agents      # 查看可用子代理
+# 或主 agent 自动在 PR 前并行派出 security-reviewer + rust-reviewer
+```
