@@ -4,7 +4,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{info, error};
+use tracing::{error, info};
 
 use gateway_core::error::GatewayError;
 use gateway_core::provider::LLMProvider;
@@ -147,7 +147,10 @@ impl LLMProvider for OllamaProvider {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             error!(%status, %body, "Ollama upstream error");
-            return Err(GatewayError::UpstreamError(format!("Ollama {}: {}", status, body)));
+            return Err(GatewayError::UpstreamError(format!(
+                "Ollama {}: {}",
+                status, body
+            )));
         }
 
         let ollama_resp = resp
@@ -185,7 +188,10 @@ impl LLMProvider for OllamaProvider {
     async fn chat_completion_stream(
         &self,
         request: ChatCompletionRequest,
-    ) -> Result<futures::stream::BoxStream<'static, Result<ChatCompletionChunk, GatewayError>>, GatewayError> {
+    ) -> Result<
+        futures::stream::BoxStream<'static, Result<ChatCompletionChunk, GatewayError>>,
+        GatewayError,
+    > {
         info!(model = %request.model, "Ollama streaming request");
 
         let mut ollama_req = self.convert_request(&request);
@@ -204,7 +210,10 @@ impl LLMProvider for OllamaProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::UpstreamError(format!("Ollama {}: {}", status, body)));
+            return Err(GatewayError::UpstreamError(format!(
+                "Ollama {}: {}",
+                status, body
+            )));
         }
 
         let stream = resp.bytes_stream();

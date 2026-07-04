@@ -1,20 +1,21 @@
 use axum::{
-    routing::{get, post, put, delete},
-    Router,
-    extract::{State, Path, Json, Extension},
-    response::{IntoResponse, Response},
+    extract::{Extension, Json, Path, State},
     http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::{delete, get, post, put},
+    Router,
 };
+use gateway_core::audit::AuditAction;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{info, warn};
 
+use crate::circuit_breaker::CircuitState;
 use crate::metrics::metering::TenantUsage;
 use crate::middleware::auth::AuthKey;
 use crate::middleware::rbac::{require_role, require_tenant};
-use crate::state::AppState;
 use crate::routes::ApiError;
-use crate::circuit_breaker::CircuitState;
+use crate::state::AppState;
 use gateway_core::auth_key::ApiKeyEntry;
 use gateway_core::error::GatewayError;
 use gateway_core::tenant::{Role, TenantContext};
@@ -112,13 +113,18 @@ pub fn admin_router() -> Router<Arc<AppState>> {
         .route("/providers", get(list_providers).post(create_provider))
         .route(
             "/providers/{name}",
-            get(get_provider).put(update_provider).delete(delete_provider),
+            get(get_provider)
+                .put(update_provider)
+                .delete(delete_provider),
         )
         .route("/keys", get(list_keys).post(create_key))
         .route("/keys/{key}", delete(delete_key))
         .route("/config/cache", put(update_cache_config))
         .route("/config/rate-limit", put(update_rate_limit))
-        .route("/config/rate-card", get(get_rate_card).put(update_rate_card))
+        .route(
+            "/config/rate-card",
+            get(get_rate_card).put(update_rate_card),
+        )
         .route("/config/quota/{tenant_id}", put(update_quota))
         .route("/usage/{tenant_id}", get(get_tenant_usage))
         .route("/usage", get(get_all_usage))
@@ -181,10 +187,11 @@ async fn get_provider(
     Path(name): Path<String>,
 ) -> Result<Json<ProviderInfo>, ApiError> {
     let config = state.config.read().await;
-    let cfg = config
-        .providers
-        .get(&name)
-        .ok_or_else(|| ApiError(gateway_core::error::GatewayError::ProviderNotFound(name.clone())))?;
+    let cfg = config.providers.get(&name).ok_or_else(|| {
+        ApiError(gateway_core::error::GatewayError::ProviderNotFound(
+            name.clone(),
+        ))
+    })?;
 
     Ok(Json(ProviderInfo {
         name,
@@ -219,7 +226,10 @@ async fn create_provider(
         }
     }
 
-    info!("Admin: creating provider '{}' with models {:?}", req.name, req.models);
+    info!(
+        "Admin: creating provider '{}' with models {:?}",
+        req.name, req.models
+    );
 
     let provider_cfg = gateway_core::config::ProviderConfig {
         api_key: req.api_key,
@@ -234,7 +244,11 @@ async fn create_provider(
         .await
         .map_err(ApiError)?;
 
-    Ok((StatusCode::CREATED, Json(serde_json::json!({"status": "created"}))).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({"status": "created"})),
+    )
+        .into_response())
 }
 
 async fn update_provider(
@@ -249,7 +263,9 @@ async fn update_provider(
     {
         let config = state.config.read().await;
         if !config.providers.contains_key(&name) {
-            return Err(ApiError(gateway_core::error::GatewayError::ProviderNotFound(name)));
+            return Err(ApiError(
+                gateway_core::error::GatewayError::ProviderNotFound(name),
+            ));
         }
     }
 
@@ -275,7 +291,10 @@ async fn update_provider(
         let config = state.config.read().await;
         config.providers.get(&name).unwrap().clone()
     };
-    state.register_provider(&name, &cfg).await.map_err(ApiError)?;
+    state
+        .register_provider(&name, &cfg)
+        .await
+        .map_err(ApiError)?;
 
     Ok(Json(serde_json::json!({"status": "updated"})))
 }
@@ -291,7 +310,9 @@ async fn delete_provider(
     {
         let config = state.config.read().await;
         if !config.providers.contains_key(&name) {
-            return Err(ApiError(gateway_core::error::GatewayError::ProviderNotFound(name)));
+            return Err(ApiError(
+                gateway_core::error::GatewayError::ProviderNotFound(name),
+            ));
         }
     }
 
@@ -376,10 +397,7 @@ async fn create_key(
 
     // Determine target tenant + role from request (tenant_admin stays in own tenant)
     let target_tenant = req.tenant_id.unwrap_or(tenant_id);
-    let target_role = req
-        .role
-        .clone()
-        .unwrap_or_else(|| "developer".to_string());
+    let target_role = req.role.clone().unwrap_or_else(|| "developer".to_string());
 
     // Only global admin can create keys for other tenants
     if target_tenant != require_role(&state, &auth_key, Role::DEVELOPER).await? {
@@ -420,12 +438,16 @@ async fn create_key(
     // Also add to the in-memory store so it works immediately
     {
         use gateway_core::auth_key::ApiKeyEntry;
-use gateway_core::error::GatewayError;
+        use gateway_core::error::GatewayError;
         let entry = ApiKeyEntry::new(&plaintext_key, &tenant_for_store, &role_for_store);
         state.auth_store.write().await.add(entry);
     }
 
-    Ok((StatusCode::CREATED, Json(serde_json::json!({"status": "created"}))).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({"status": "created"})),
+    )
+        .into_response())
 }
 
 async fn delete_key(
@@ -469,7 +491,6 @@ async fn delete_key(
     Ok(Json(serde_json::json!({"status": "deleted"})))
 }
 
-
 async fn update_quota(
     State(state): State<Arc<AppState>>,
     Extension(auth_key): Extension<AuthKey>,
@@ -506,6 +527,30 @@ async fn update_quota(
     }
 
     info!(tenant = %tenant_id, "Admin: updated tenant quotas");
+
+    let caller_role = {
+        let store = state.auth_store.read().await;
+        store
+            .verify_by_id(&auth_key.0)
+            .map(|e| Role::from_str(&e.role))
+            .unwrap_or(Role::DEVELOPER)
+    };
+    state
+        .emit_audit(
+            AuditAction::QuotaUpdate,
+            gateway_core::audit::AuditActor {
+                id: auth_key.0,
+                role: caller_role,
+                ip: None,
+                context: None,
+            },
+            caller_tenant,
+            Some(tenant_id.as_str()),
+            true,
+            None,
+        )
+        .await;
+
     Ok(Json(serde_json::json!({
         "status": "updated",
         "tenant_id": tenant_id,
@@ -581,7 +626,11 @@ async fn create_tenant(
     config.tenants.insert(req.id.clone(), tenant_cfg);
 
     info!(tenant = %req.id, "Admin: created tenant");
-    Ok((StatusCode::CREATED, Json(serde_json::json!({"status": "created"}))).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({"status": "created"})),
+    )
+        .into_response())
 }
 
 async fn delete_tenant(
@@ -602,12 +651,12 @@ async fn delete_tenant(
     }
 
     let mut config = state.config.write().await;
-    config
-        .tenants
-        .remove(&tenant_id)
-        .ok_or_else(|| ApiError(gateway_core::error::GatewayError::BadRequest(
-            format!("Tenant '{}' not found", tenant_id),
-        )))?;
+    config.tenants.remove(&tenant_id).ok_or_else(|| {
+        ApiError(gateway_core::error::GatewayError::BadRequest(format!(
+            "Tenant '{}' not found",
+            tenant_id
+        )))
+    })?;
 
     info!(tenant = %tenant_id, "Admin: deleted tenant");
     Ok(Json(serde_json::json!({"status": "deleted"})))
@@ -666,9 +715,7 @@ async fn get_logs(State(_state): State<Arc<AppState>>) -> Json<Vec<crate::log_bu
     Json(crate::log_buffer::LOG_BUFFER.entries())
 }
 
-async fn get_circuit_breaker_status(
-    State(state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
+async fn get_circuit_breaker_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let states = state.circuit_breaker.all_states().await;
     let total_rejected = state.circuit_breaker.total_rejected();
 

@@ -5,7 +5,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Client;
 use std::collections::HashMap;
 use std::pin::Pin;
-use tracing::{info, error};
+use tracing::{error, info};
 
 use gateway_core::error::GatewayError;
 use gateway_core::provider::LLMProvider;
@@ -83,7 +83,10 @@ impl LLMProvider for OpenAIProvider {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             error!(%status, %body, "OpenAI upstream error");
-            return Err(GatewayError::UpstreamError(format!("OpenAI {}: {}", status, body)));
+            return Err(GatewayError::UpstreamError(format!(
+                "OpenAI {}: {}",
+                status, body
+            )));
         }
 
         resp.json::<ChatCompletionResponse>()
@@ -94,7 +97,10 @@ impl LLMProvider for OpenAIProvider {
     async fn chat_completion_stream(
         &self,
         mut request: ChatCompletionRequest,
-    ) -> Result<futures::stream::BoxStream<'static, Result<ChatCompletionChunk, GatewayError>>, GatewayError> {
+    ) -> Result<
+        futures::stream::BoxStream<'static, Result<ChatCompletionChunk, GatewayError>>,
+        GatewayError,
+    > {
         request.stream = true;
         info!(model = %request.model, "OpenAI streaming request");
 
@@ -108,7 +114,10 @@ impl LLMProvider for OpenAIProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::UpstreamError(format!("OpenAI {}: {}", status, body)));
+            return Err(GatewayError::UpstreamError(format!(
+                "OpenAI {}: {}",
+                status, body
+            )));
         }
 
         let stream = resp.bytes_stream();
@@ -126,9 +135,10 @@ impl LLMProvider for OpenAIProvider {
                             match serde_json::from_str::<ChatCompletionChunk>(data) {
                                 Ok(chunk) => return Some(Ok(chunk)),
                                 Err(e) => {
-                                    return Some(Err(GatewayError::UpstreamError(
-                                        format!("SSE parse error: {}", e),
-                                    )));
+                                    return Some(Err(GatewayError::UpstreamError(format!(
+                                        "SSE parse error: {}",
+                                        e
+                                    ))));
                                 }
                             }
                         }

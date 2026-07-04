@@ -30,7 +30,8 @@ pub async fn x_request_id_middleware(request: Request, next: Next) -> Response {
     let mut resp = next.run(request).await;
 
     if let Ok(v) = HeaderValue::from_str(&req_id) {
-        resp.headers_mut().insert(header::HeaderName::from_static("x-request-id"), v);
+        resp.headers_mut()
+            .insert(header::HeaderName::from_static("x-request-id"), v);
     }
 
     let status = resp.status();
@@ -38,11 +39,7 @@ pub async fn x_request_id_middleware(request: Request, next: Next) -> Response {
         && (status.as_u16() == 429 || status.as_u16() == 503)
         && !resp.headers().contains_key(header::RETRY_AFTER)
     {
-        let secs: &'static str = if status.as_u16() == 429 {
-            "60"
-        } else {
-            "30"
-        };
+        let secs: &'static str = if status.as_u16() == 429 { "60" } else { "30" };
         // Safe: static digits
         let v = HeaderValue::from_static(secs);
         resp.headers_mut().insert(header::RETRY_AFTER, v);

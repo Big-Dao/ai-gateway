@@ -39,10 +39,7 @@ impl TestServer {
     ///
     /// `extra_envs` is a list of `(AI_GATEWAY__-prefixed-key, JSON-string)`
     /// pairs forwarded verbatim as env vars (e.g., `RATE_LIMIT__RPM=5`).
-    pub async fn spawn_with(
-        api_keys: &[&str],
-        extra_envs: &[(&str, String)],
-    ) -> Self {
+    pub async fn spawn_with(api_keys: &[&str], extra_envs: &[(&str, String)]) -> Self {
         let port = free_port();
         let keys_json: String = serde_json::to_string(&api_keys).expect("serialize api_keys");
 
@@ -113,11 +110,7 @@ base_url = "http://127.0.0.1:11111"
         let mut started = false;
         let mut last_err = String::new();
         for _ in 0..100 {
-            match client
-                .get(format!("{base_url}/healthz"))
-                .send()
-                .await
-            {
+            match client.get(format!("{base_url}/healthz")).send().await {
                 Ok(resp) if resp.status().is_success() => {
                     started = true;
                     break;
@@ -133,7 +126,8 @@ base_url = "http://127.0.0.1:11111"
         }
         if !started {
             let _ = child.start_kill();
-            let log_tail = tokio::fs::read_to_string(&log_path).await
+            let log_tail = tokio::fs::read_to_string(&log_path)
+                .await
                 .unwrap_or_else(|_| "(could not read log)".into());
             panic!(
                 "gateway-server did not become healthy within ~20s. \
@@ -141,7 +135,14 @@ base_url = "http://127.0.0.1:11111"
                  config={config_path:?}\n\
                  last_err={last_err}\n\
                  --- LAST 2000 BYTES OF LOG ({log_path:?}) ---\n{}",
-                log_tail.chars().rev().take(2000).collect::<String>().chars().rev().collect::<String>()
+                log_tail
+                    .chars()
+                    .rev()
+                    .take(2000)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect::<String>()
             );
         }
 
@@ -165,14 +166,17 @@ base_url = "http://127.0.0.1:11111"
         let log_path = std::env::temp_dir().join(format!("gateway-test-{}.log", port));
 
         // Format structured_keys as an array of [key, tenant, role] for TOML
-        let entries: Vec<String> = keys.iter().map(|(k, t, r)| {
-            format!(
-                "[\"{}\", \"{}\", \"{}\"]",
-                k.replace('"', "\\\""),
-                t.replace('"', "\\\""),
-                r.replace('"', "\\\"")
-            )
-        }).collect();
+        let entries: Vec<String> = keys
+            .iter()
+            .map(|(k, t, r)| {
+                format!(
+                    "[\"{}\", \"{}\", \"{}\"]",
+                    k.replace('"', "\\\""),
+                    t.replace('"', "\\\""),
+                    r.replace('"', "\\\"")
+                )
+            })
+            .collect();
         let structured = format!("[{}]", entries.join(", "));
 
         let toml = format!(
@@ -188,7 +192,9 @@ models = ["smoke-model"]
 base_url = "http://127.0.0.1:11111"
 "#,
         );
-        tokio::fs::write(&config_path, toml).await.expect("write config");
+        tokio::fs::write(&config_path, toml)
+            .await
+            .expect("write config");
 
         let bin_path = env!("CARGO_BIN_EXE_gateway-server");
         let out_file = std::fs::OpenOptions::new()
@@ -246,6 +252,93 @@ base_url = "http://127.0.0.1:11111"
             )],
         )
         .await
+    }
+
+    /// Spawn with structured (tenant-scoped) keys AND custom rate-limit RPM.
+    /// Needed for quota tests where we want rate-limit to never trip before quota.
+    pub async fn spawn_with_keys_and_rpm(keys: &[(&str, &str, &str)], rpm: u16) -> Self {
+        let port = free_port();
+        let config_path = std::env::temp_dir().join(format!("gateway-test-{}.toml", port));
+        let log_path = std::env::temp_dir().join(format!("gateway-test-{}.log", port));
+
+        let entries: Vec<String> = keys
+            .iter()
+            .map(|(k, t, r)| {
+                format!(
+                    "[\"{}\", \"{}\", \"{}\"]",
+                    k.replace('"', "\\\""),
+                    t.replace('"', "\\\""),
+                    r.replace('"', "\\\"")
+                )
+            })
+            .collect();
+        let structured = format!("[{}]", entries.join(", "));
+
+        let toml = format!(
+            r#"[server]
+host = "0.0.0.0"
+port = {port}
+
+[auth]
+structured_keys = {structured}
+
+[providers.ollama]
+models = ["smoke-model"]
+base_url = "http://127.0.0.1:11111"
+"#,
+        );
+        tokio::fs::write(&config_path, toml)
+            .await
+            .expect("write config");
+
+        let bin_path = env!("CARGO_BIN_EXE_gateway-server");
+        let out_stdio = Stdio::from(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .expect("open log file"),
+        );
+        let err_stdio = Stdio::from(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .expect("open log file"),
+        );
+
+        let mut cmd = Command::new(bin_path);
+        cmd.env("CONFIG_PATH", config_path.to_str().unwrap())
+            .env("RUST_LOG", "info,gateway_server=debug")
+            .env(
+                "AI_GATEWAY__RATE_LIMIT__REQUESTS_PER_MINUTE",
+                rpm.to_string(),
+            )
+            .stdout(out_stdio)
+            .stderr(err_stdio);
+
+        let base_url = format!("http://127.0.0.1:{port}");
+        let mut child = cmd.spawn().expect("spawn gateway-server binary");
+        let client = reqwest::Client::new();
+        let mut started = false;
+        for _ in 0..100 {
+            match client.get(format!("{base_url}/healthz")).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    started = true;
+                    break;
+                }
+                _ => {}
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        if !started {
+            let _ = child.start_kill();
+            panic!("gateway-server not healthy");
+        }
+
+        let _ = tokio::fs::remove_file(&config_path).await;
+
+        Self { base_url, child }
     }
 }
 

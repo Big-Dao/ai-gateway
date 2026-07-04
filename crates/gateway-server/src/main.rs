@@ -34,10 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // In-memory ring buffer for Admin UI
         .with(log_buffer_layer)
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| {
-                    "info,gateway_server=debug,gateway_core=debug,providers=debug".into()
-                }),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "info,gateway_server=debug,gateway_core=debug,providers=debug".into()
+            }),
         )
         .init();
 
@@ -49,8 +48,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Configuration loaded"
     );
 
-    // Build app state
-    let state = Arc::new(state::AppState::new(config).await?);
+    // Build app state — use FileAuditWriter when `audit_path` is configured.
+    let state = if let Some(ref audit_path) = config.audit_path {
+        let p = std::path::PathBuf::from(audit_path);
+        Arc::new(state::AppState::new_with_config_and_audit(config, p).await?)
+    } else {
+        Arc::new(state::AppState::new(config).await?)
+    };
 
     // Secure startup check: refuse to start with auth enabled but no keys
     if state.config.read().await.auth.enabled {
@@ -74,7 +78,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     info!(address = %addr, "AI Gateway listening");
-    info!(admin_url = format!("http://{}/admin", addr), "Admin UI ready");
+    info!(
+        admin_url = format!("http://{}/admin", addr),
+        "Admin UI ready"
+    );
 
     // Graceful shutdown: stop accepting new connections, let in-flight
     // requests drain, then exit. SIGINT/SIGTERM typically signal "drain and

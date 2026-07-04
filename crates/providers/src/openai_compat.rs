@@ -37,7 +37,6 @@ impl OpenAICompatProvider {
             field_overrides,
         }
     }
-
 }
 
 // Implement LLMProvider by delegation.
@@ -50,7 +49,8 @@ impl gateway_core::provider::LLMProvider for OpenAICompatProvider {
     async fn chat_completion(
         &self,
         mut request: gateway_core::types::ChatCompletionRequest,
-    ) -> Result<gateway_core::types::ChatCompletionResponse, gateway_core::error::GatewayError> {
+    ) -> Result<gateway_core::types::ChatCompletionResponse, gateway_core::error::GatewayError>
+    {
         apply_field_overrides(&self.field_overrides, &mut request);
         self.inner.chat_completion(request).await
     }

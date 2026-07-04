@@ -1,8 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::Mutex;
-use serde::{Deserialize, Serialize};
 use tracing::info;
 
 /// Status of a completed request.
@@ -84,7 +84,11 @@ impl MeteringService {
         entry.total_prompt_tokens += event.prompt_tokens;
         entry.total_completion_tokens += event.completion_tokens;
         entry.total_tokens += event.total_tokens();
-        entry.total_errors += if event.status == RequestStatus::Error { 1 } else { 0 };
+        entry.total_errors += if event.status == RequestStatus::Error {
+            1
+        } else {
+            0
+        };
         entry.total_cost_cents += event.estimated_cost_cents;
 
         let model_entry = entry
@@ -136,7 +140,8 @@ mod tests {
             completion_tokens: 50,
             status: RequestStatus::Success,
             estimated_cost_cents: 1.5,
-        }).await;
+        })
+        .await;
 
         let usage = svc.tenant_usage("t1").await.unwrap();
         assert_eq!(usage.total_requests, 1);
@@ -159,7 +164,8 @@ mod tests {
                 completion_tokens: 5,
                 status: RequestStatus::Error,
                 estimated_cost_cents: 0.0,
-            }).await;
+            })
+            .await;
         }
 
         let usage = svc.tenant_usage("t1").await.unwrap();

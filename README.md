@@ -144,16 +144,20 @@ ai-gateway/
     └── gateway-server/           # HTTP 服务
         ├── main.rs               # 启动入口
         ├── routes.rs             # 主路由 + SSE
-        ├── admin.rs              # Admin REST API
-        ├── router.rs             # 模型路由
+        ├── admin.rs              # Admin REST API (20+ 端点)
         ├── state.rs              # AppState (RwLock 热更新)
+        ├── circuit_breaker.rs    # 熔断器
+        ├── retry.rs              # 指数退避 + 跨 Provider 降级
+        ├── json_logger.rs        # 结构化 JSON 日志
         ├── log_buffer.rs         # 内存日志环形缓冲
-        ├── static_files.rs       # 静态文件嵌入
-        ├── middleware/auth.rs    # Bearer Token 认证
-        └── static/               # Admin UI 前端
-            ├── index.html
-            ├── admin.css
-            └── admin.js
+        ├── static_files.rs       # Admin UI 前端嵌入
+        ├── metrics/              # 计量 / 配额 / Prometheus
+        └── middleware/            # Axum 中间件
+            ├── auth.rs           # Bearer → HMAC 校验 → TenantContext
+            ├── rate_limit.rs     # 每租户令牌桶限流
+            ├── quota_middleware.rs  # 每租户 RPM/RPD/TPM/TPD 配额
+            ├── rbac.rs           # 角色权限校验
+            └── x_request_id.rs   # 请求 ID + Retry-After 传播
 ```
 
 ## 环境变量
@@ -164,6 +168,15 @@ ai-gateway/
 | `RUST_LOG` | 日志级别过滤 | `info` |
 
 也可通过 `AI_GATEWAY__SECTION__KEY` 格式的环境变量覆盖任意配置项。
+
+### 审计日志（可选）
+
+```toml
+# 在 config.toml 中启用 JSONL 审计日志
+audit_path = "/var/log/ai-gateway/audit.jsonl"
+```
+
+管理员对配置/配额/密钥的每次写操作都会以 JSON 行格式追加到该文件。
 
 ## 架构
 

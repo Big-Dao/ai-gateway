@@ -4,7 +4,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{info, error};
+use tracing::{error, info};
 
 use gateway_core::error::GatewayError;
 use gateway_core::provider::LLMProvider;
@@ -94,9 +94,8 @@ impl GeminiProvider {
             name: "gemini".into(),
             client: Client::new(),
             api_key,
-            base_url: base_url.unwrap_or_else(|| {
-                "https://generativelanguage.googleapis.com/v1beta".into()
-            }),
+            base_url: base_url
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".into()),
             extra_headers,
         }
     }
@@ -184,11 +183,14 @@ impl GeminiProvider {
                 other => other.to_lowercase(),
             });
 
-        let usage = resp.usage_metadata.map(|u| Usage {
-            prompt_tokens: u.prompt_token_count,
-            completion_tokens: u.candidates_token_count,
-            total_tokens: u.total_token_count,
-        }).unwrap_or_default();
+        let usage = resp
+            .usage_metadata
+            .map(|u| Usage {
+                prompt_tokens: u.prompt_token_count,
+                completion_tokens: u.candidates_token_count,
+                total_tokens: u.total_token_count,
+            })
+            .unwrap_or_default();
 
         ChatCompletionResponse {
             id: format!("gemini-{}", uuid::Uuid::new_v4().simple()),
@@ -223,10 +225,7 @@ impl LLMProvider for GeminiProvider {
         info!(model = %request.model, "Gemini non-streaming request");
 
         let gemini_req = self.convert_request(&request);
-        let url = format!(
-            "{}/models/{}:generateContent",
-            self.base_url, request.model
-        );
+        let url = format!("{}/models/{}:generateContent", self.base_url, request.model);
         let mut req = self
             .client
             .post(&url)
@@ -245,7 +244,10 @@ impl LLMProvider for GeminiProvider {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             error!(%status, %body, "Gemini upstream error");
-            return Err(GatewayError::UpstreamError(format!("Gemini {}: {}", status, body)));
+            return Err(GatewayError::UpstreamError(format!(
+                "Gemini {}: {}",
+                status, body
+            )));
         }
 
         let gemini_resp = resp
@@ -259,7 +261,10 @@ impl LLMProvider for GeminiProvider {
     async fn chat_completion_stream(
         &self,
         request: ChatCompletionRequest,
-    ) -> Result<futures::stream::BoxStream<'static, Result<ChatCompletionChunk, GatewayError>>, GatewayError> {
+    ) -> Result<
+        futures::stream::BoxStream<'static, Result<ChatCompletionChunk, GatewayError>>,
+        GatewayError,
+    > {
         info!(model = %request.model, "Gemini streaming request");
 
         let gemini_req = self.convert_request(&request);
@@ -286,7 +291,10 @@ impl LLMProvider for GeminiProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::UpstreamError(format!("Gemini {}: {}", status, body)));
+            return Err(GatewayError::UpstreamError(format!(
+                "Gemini {}: {}",
+                status, body
+            )));
         }
 
         let stream = resp.bytes_stream();
@@ -304,7 +312,9 @@ impl LLMProvider for GeminiProvider {
                             let line = line.trim();
                             if line.starts_with("data: ") {
                                 let data = &line[6..];
-                                if let Ok(gemini_resp) = serde_json::from_str::<GeminiResponse>(data) {
+                                if let Ok(gemini_resp) =
+                                    serde_json::from_str::<GeminiResponse>(data)
+                                {
                                     if let Some(candidate) = gemini_resp.candidates.first() {
                                         let content: String = candidate
                                             .content
@@ -312,13 +322,19 @@ impl LLMProvider for GeminiProvider {
                                             .iter()
                                             .filter_map(|p| p.text.clone())
                                             .collect();
-                                        let finish = candidate.finish_reason.clone().map(|r| match r.as_str() {
-                                            "STOP" => "stop".into(),
-                                            "MAX_TOKENS" => "length".into(),
-                                            other => other.to_lowercase(),
-                                        });
+                                        let finish =
+                                            candidate.finish_reason.clone().map(|r| {
+                                                match r.as_str() {
+                                                    "STOP" => "stop".into(),
+                                                    "MAX_TOKENS" => "length".into(),
+                                                    other => other.to_lowercase(),
+                                                }
+                                            });
                                         return Some(Ok(ChatCompletionChunk::new_delta(
-                                            &model, &id, Some(content), finish,
+                                            &model,
+                                            &id,
+                                            Some(content),
+                                            finish,
                                         )));
                                     }
                                 }

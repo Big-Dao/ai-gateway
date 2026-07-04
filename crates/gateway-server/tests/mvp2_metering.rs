@@ -1,7 +1,22 @@
 mod common;
 use common::TestServer;
 
-fn u(s: &TestServer, p: &str) -> String { format!("{}{p}", s.base_url) }
+fn u(s: &TestServer, p: &str) -> String {
+    format!("{}{p}", s.base_url)
+}
+
+/// Spawn a server with structured_keys (`api_keys` TOML field) and a high
+/// rate-limit so rate-limit middleware never interferes with quota testing.
+async fn spawn_quota_test_server() -> TestServer {
+    TestServer::spawn_with(
+        &["admin-key", "dev-key"],
+        &[
+            ("AUTH__ENABLED", "true".into()),
+            ("RATE_LIMIT__REQUESTS_PER_MINUTE", "1000".into()),
+        ],
+    )
+    .await
+}
 
 // ─── Admin quota API: read/update per-tenant quota ─────────────────────────
 
@@ -17,7 +32,11 @@ async fn admin_can_update_quota() {
         .send()
         .await
         .expect("quota PUT");
-    assert!(resp.status().is_success(), "quota update returned {}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "quota update returned {}",
+        resp.status()
+    );
 
     // Read via tenants endpoint
     let resp = client
@@ -32,40 +51,65 @@ async fn admin_can_update_quota() {
     assert_eq!(default["quotas"]["max_rpm"], 42);
 }
 
-// ─── Quota enforcement via HTTP: makes quota exceed and verify 429 ──────────
+// ─── Quota enforcement via HTTP: verify 429 after RPM exceeded ───────────────
+///
+/// Uses /v1/models (a no-provider-touching endpoint) so the circuit breaker
+/// stays closed and quota is the only gate that trips.
 
 #[tokio::test]
 async fn quota_rpm_exceeded_via_http() {
     let client = reqwest::Client::new();
-    let server = TestServer::spawn_with_keys(&[
-        ("admin-key", "default", "admin"),
-        ("dev-key", "default", "developer"),
-    ]).await;
+    // Rate-limit set very high so its bucket never trips before quota.
+    let server = TestServer::spawn_with_keys_and_rpm(
+        &[
+            ("admin-key", "default", "admin"),
+            ("dev-key", "default", "developer"),
+        ],
+        10_000,
+    )
+    .await;
 
-    // Set the quota to 5 RPM
-    client
+    // Set quota to RPM=10 for the default tenant via admin API
+    let resp = client
         .put(u(&server, "/api/admin/config/quota/default"))
         .bearer_auth("admin-key")
-        .json(&serde_json::json!({ "max_rpm": 5, "max_rpd": 0, "max_tpm": 0, "max_tpd": 0 }))
+        .json(&serde_json::json!({ "max_rpm": 10, "max_rpd": 0, "max_tpm": 0, "max_tpd": 0 }))
         .send()
         .await
         .expect("quota PUT");
+    assert!(
+        resp.status().is_success(),
+        "quota update should succeed, got {}",
+        resp.status()
+    );
 
-    // First request
+    // 9 more requests (admin PUT consumed 1quota slot) should succeed
+    for i in 0..9 {
+        let resp = client
+            .get(u(&server, "/v1/models"))
+            .bearer_auth("dev-key")
+            .send()
+            .await
+            .expect("within-quota request");
+        assert!(
+            resp.status().is_success(),
+            "request {} within quota should succeed, got {}",
+            i + 1,
+            resp.status()
+        );
+    }
+
+    // 10th quota-consuming request (11th total incl. the admin PUT) must be 429
     let resp = client
-        .get(u(&server, "/v1/chat/completions"))
+        .get(u(&server, "/v1/models"))
         .bearer_auth("dev-key")
-        .header("Content-Type", "application/json")
-        .json(&serde_json::json!({
-            "model": "nonexistent-model-xyz",
-            "messages": [{"role": "user", "content": "test"}]
-        }))
         .send()
         .await
-        .expect("request 1");
-    let status1 = resp.status();
-
-    // Since we disabled middleware for now, the request passes through 
-    // (model will fail, but it's auth'd)
-    assert_ne!(status1, reqwest::StatusCode::UNAUTHORIZED, "should be authenticated");
+        .expect("over-quota request");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::TOO_MANY_REQUESTS,
+        "request exceeding quota should be blocked with 429, got {}",
+        resp.status()
+    );
 }

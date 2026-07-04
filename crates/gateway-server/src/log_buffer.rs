@@ -91,7 +91,8 @@ impl tracing::field::Visit for StringVisitor {
             self.result.push(' ');
         }
         if field.name() != "message" {
-            self.result.push_str(&format!("{}={:?}", field.name(), value));
+            self.result
+                .push_str(&format!("{}={:?}", field.name(), value));
         } else {
             self.result.push_str(&format!("{:?}", value));
         }

@@ -208,7 +208,12 @@ impl ChatCompletionResponse {
 }
 
 impl ChatCompletionChunk {
-    pub fn new_delta(model: &str, id: &str, content: Option<String>, finish_reason: Option<String>) -> Self {
+    pub fn new_delta(
+        model: &str,
+        id: &str,
+        content: Option<String>,
+        finish_reason: Option<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             object: "chat.completion.chunk".into(),
@@ -217,7 +222,11 @@ impl ChatCompletionChunk {
             choices: vec![ChunkChoice {
                 index: 0,
                 delta: Delta {
-                    role: if content.is_some() { None } else { Some("assistant".into()) },
+                    role: if content.is_some() {
+                        None
+                    } else {
+                        Some("assistant".into())
+                    },
                     content,
                     tool_calls: None,
                 },

@@ -73,12 +73,14 @@ impl CircuitBreaker {
         let mut map = self.inner.write().await;
         let now = Instant::now();
 
-        let entry = map.entry(provider_name.to_string()).or_insert_with(|| BreakerInner {
-            state: CircuitState::Closed,
-            failures: Vec::new(),
-            opened_at: None,
-            half_open_successes: 0,
-        });
+        let entry = map
+            .entry(provider_name.to_string())
+            .or_insert_with(|| BreakerInner {
+                state: CircuitState::Closed,
+                failures: Vec::new(),
+                opened_at: None,
+                half_open_successes: 0,
+            });
 
         // Prune old failures outside the window.
         entry
@@ -146,12 +148,14 @@ impl CircuitBreaker {
         let mut map = self.inner.write().await;
         let now = Instant::now();
 
-        let entry = map.entry(provider_name.to_string()).or_insert_with(|| BreakerInner {
-            state: CircuitState::Closed,
-            failures: Vec::new(),
-            opened_at: None,
-            half_open_successes: 0,
-        });
+        let entry = map
+            .entry(provider_name.to_string())
+            .or_insert_with(|| BreakerInner {
+                state: CircuitState::Closed,
+                failures: Vec::new(),
+                opened_at: None,
+                half_open_successes: 0,
+            });
 
         // Prune old failures.
         entry
@@ -198,9 +202,7 @@ impl CircuitBreaker {
     /// Get a snapshot of all circuit breaker states.
     pub async fn all_states(&self) -> HashMap<String, CircuitState> {
         let map = self.inner.read().await;
-        map.iter()
-            .map(|(k, v)| (k.clone(), v.state))
-            .collect()
+        map.iter().map(|(k, v)| (k.clone(), v.state)).collect()
     }
 
     /// Total requests rejected due to open circuits.

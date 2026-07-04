@@ -71,7 +71,8 @@ impl<'a> tracing::field::Visit for FieldVisitor<'a> {
         // Skip the "message" field's debug wrapper quotes.
         let val = format!("{:?}", value);
         let val = val.trim_matches('"');
-        self.fields.insert(key, serde_json::Value::String(val.to_string()));
+        self.fields
+            .insert(key, serde_json::Value::String(val.to_string()));
     }
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {

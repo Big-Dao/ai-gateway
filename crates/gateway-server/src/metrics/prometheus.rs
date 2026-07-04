@@ -1,67 +1,109 @@
 //! Prometheus metrics exporter (MVP 2+3).
 use prometheus::{
-    IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Histogram, HistogramOpts, HistogramVec,
-    Opts, Registry, TextEncoder, Encoder,
+    Encoder, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge,
+    IntGaugeVec, Opts, Registry, TextEncoder,
 };
 
-fn register_all(registry: &Registry) -> (
-    IntCounterVec, IntCounterVec, IntCounterVec,
-    IntCounter, IntCounter,
-    HistogramVec, IntGaugeVec, IntGaugeVec, IntGaugeVec,
+fn register_all(
+    registry: &Registry,
+) -> (
+    IntCounterVec,
+    IntCounterVec,
+    IntCounterVec,
+    IntCounter,
+    IntCounter,
+    HistogramVec,
+    IntGaugeVec,
+    IntGaugeVec,
+    IntGaugeVec,
 ) {
     let gateway_requests_total = IntCounterVec::new(
         Opts::new("gateway_requests_total", "Total requests"),
         &["model", "provider", "tenant", "role", "stream"],
-    ).unwrap();
+    )
+    .unwrap();
 
     let gateway_tokens_total = IntCounterVec::new(
         Opts::new("gateway_tokens_total", "Total tokens"),
         &["model", "provider", "tenant", "kind"],
-    ).unwrap();
+    )
+    .unwrap();
 
     let gateway_errors_total = IntCounterVec::new(
         Opts::new("gateway_errors_total", "Total errors"),
         &["model", "provider", "error_type"],
-    ).unwrap();
+    )
+    .unwrap();
 
-    let gateway_cache_hits_total = IntCounter::new(
-        "gateway_cache_hits_total", "Total cache hits",
-    ).unwrap();
+    let gateway_cache_hits_total =
+        IntCounter::new("gateway_cache_hits_total", "Total cache hits").unwrap();
 
-    let gateway_cache_misses_total = IntCounter::new(
-        "gateway_cache_misses_total", "Total cache misses",
-    ).unwrap();
+    let gateway_cache_misses_total =
+        IntCounter::new("gateway_cache_misses_total", "Total cache misses").unwrap();
 
     let gateway_request_duration_seconds = HistogramVec::new(
-        HistogramOpts::new("gateway_request_duration_seconds", "Request duration in seconds")
-            .buckets(vec![0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0]),
+        HistogramOpts::new(
+            "gateway_request_duration_seconds",
+            "Request duration in seconds",
+        )
+        .buckets(vec![
+            0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0,
+        ]),
         &["model", "provider"],
-    ).unwrap();
+    )
+    .unwrap();
 
     let gateway_active_requests = IntGaugeVec::new(
         Opts::new("gateway_active_requests", "In-flight requests"),
         &["provider", "tenant"],
-    ).unwrap();
+    )
+    .unwrap();
 
     let gateway_circuit_breaker_state = IntGaugeVec::new(
-        Opts::new("gateway_circuit_breaker_state", "Circuit breaker state (0=closed,1=open,2=half)"),
+        Opts::new(
+            "gateway_circuit_breaker_state",
+            "Circuit breaker state (0=closed,1=open,2=half)",
+        ),
         &["provider"],
-    ).unwrap();
+    )
+    .unwrap();
 
     let gateway_rate_limit_remaining = IntGaugeVec::new(
-        Opts::new("gateway_rate_limit_remaining", "Remaining rate-limit tokens"),
+        Opts::new(
+            "gateway_rate_limit_remaining",
+            "Remaining rate-limit tokens",
+        ),
         &["tenant"],
-    ).unwrap();
+    )
+    .unwrap();
 
-    registry.register(Box::new(gateway_requests_total.clone())).expect("register requests_total");
-    registry.register(Box::new(gateway_tokens_total.clone())).expect("register tokens_total");
-    registry.register(Box::new(gateway_errors_total.clone())).expect("register errors_total");
-    registry.register(Box::new(gateway_cache_hits_total.clone())).expect("register cache_hits");
-    registry.register(Box::new(gateway_cache_misses_total.clone())).expect("register cache_misses");
-    registry.register(Box::new(gateway_request_duration_seconds.clone())).expect("register duration");
-    registry.register(Box::new(gateway_active_requests.clone())).expect("register active_reqs");
-    registry.register(Box::new(gateway_circuit_breaker_state.clone())).expect("register circuit_breaker");
-    registry.register(Box::new(gateway_rate_limit_remaining.clone())).expect("register rate_limit_rem");
+    registry
+        .register(Box::new(gateway_requests_total.clone()))
+        .expect("register requests_total");
+    registry
+        .register(Box::new(gateway_tokens_total.clone()))
+        .expect("register tokens_total");
+    registry
+        .register(Box::new(gateway_errors_total.clone()))
+        .expect("register errors_total");
+    registry
+        .register(Box::new(gateway_cache_hits_total.clone()))
+        .expect("register cache_hits");
+    registry
+        .register(Box::new(gateway_cache_misses_total.clone()))
+        .expect("register cache_misses");
+    registry
+        .register(Box::new(gateway_request_duration_seconds.clone()))
+        .expect("register duration");
+    registry
+        .register(Box::new(gateway_active_requests.clone()))
+        .expect("register active_reqs");
+    registry
+        .register(Box::new(gateway_circuit_breaker_state.clone()))
+        .expect("register circuit_breaker");
+    registry
+        .register(Box::new(gateway_rate_limit_remaining.clone()))
+        .expect("register rate_limit_rem");
 
     (
         gateway_requests_total,
@@ -93,66 +135,117 @@ impl PrometheusExporter {
     pub fn new() -> Self {
         let registry = Registry::new();
         let (
-            requests_total, tokens_total, errors_total,
-            cache_hits_total, cache_misses_total,
-            request_duration_seconds, active_requests,
-            circuit_breaker_state, rate_limit_remaining,
+            requests_total,
+            tokens_total,
+            errors_total,
+            cache_hits_total,
+            cache_misses_total,
+            request_duration_seconds,
+            active_requests,
+            circuit_breaker_state,
+            rate_limit_remaining,
         ) = register_all(&registry);
 
         // Prime vec metrics with default labels so they render even at zero
-        requests_total.with_label_values(&["_", "_", "_", "_", "false"]).inc_by(0);
-        tokens_total.with_label_values(&["_", "_", "_", "_"]).inc_by(0);
+        requests_total
+            .with_label_values(&["_", "_", "_", "_", "false"])
+            .inc_by(0);
+        tokens_total
+            .with_label_values(&["_", "_", "_", "_"])
+            .inc_by(0);
         errors_total.with_label_values(&["_", "_", "_"]).inc_by(0);
-        request_duration_seconds.with_label_values(&["_", "_"]).observe(0.0);
+        request_duration_seconds
+            .with_label_values(&["_", "_"])
+            .observe(0.0);
         active_requests.with_label_values(&["_", "_"]).set(0);
         circuit_breaker_state.with_label_values(&["_"]).set(0);
         rate_limit_remaining.with_label_values(&["_"]).set(0);
 
         Self {
-            registry, requests_total, tokens_total, errors_total,
-            cache_hits_total, cache_misses_total,
-            request_duration_seconds, active_requests,
-            circuit_breaker_state, rate_limit_remaining,
+            registry,
+            requests_total,
+            tokens_total,
+            errors_total,
+            cache_hits_total,
+            cache_misses_total,
+            request_duration_seconds,
+            active_requests,
+            circuit_breaker_state,
+            rate_limit_remaining,
         }
     }
 
-    pub fn record_request(&self, model: &str, provider: &str, tenant: &str, role: &str, stream: bool) {
+    pub fn record_request(
+        &self,
+        model: &str,
+        provider: &str,
+        tenant: &str,
+        role: &str,
+        stream: bool,
+    ) {
         let s = if stream { "true" } else { "false" };
-        self.requests_total.with_label_values(&[model, provider, tenant, role, s]).inc();
+        self.requests_total
+            .with_label_values(&[model, provider, tenant, role, s])
+            .inc();
     }
 
-    pub fn record_tokens(&self, model: &str, provider: &str, tenant: &str, kind: &str, amount: u64) {
-        self.tokens_total.with_label_values(&[model, provider, tenant, kind]).inc_by(amount);
+    pub fn record_tokens(
+        &self,
+        model: &str,
+        provider: &str,
+        tenant: &str,
+        kind: &str,
+        amount: u64,
+    ) {
+        self.tokens_total
+            .with_label_values(&[model, provider, tenant, kind])
+            .inc_by(amount);
     }
 
     pub fn record_error(&self, model: &str, provider: &str, error_type: &str) {
-        self.errors_total.with_label_values(&[model, provider, error_type]).inc();
+        self.errors_total
+            .with_label_values(&[model, provider, error_type])
+            .inc();
     }
 
-    pub fn record_cache_hit(&self)  { self.cache_hits_total.inc(); }
-    pub fn record_cache_miss(&self) { self.cache_misses_total.inc(); }
+    pub fn record_cache_hit(&self) {
+        self.cache_hits_total.inc();
+    }
+    pub fn record_cache_miss(&self) {
+        self.cache_misses_total.inc();
+    }
 
     pub fn record_duration(&self, model: &str, provider: &str, secs: f64) {
-        self.request_duration_seconds.with_label_values(&[model, provider]).observe(secs);
+        self.request_duration_seconds
+            .with_label_values(&[model, provider])
+            .observe(secs);
     }
 
     pub fn set_active_requests(&self, provider: &str, tenant: &str, count: i64) {
-        self.active_requests.with_label_values(&[provider, tenant]).set(count);
+        self.active_requests
+            .with_label_values(&[provider, tenant])
+            .set(count);
     }
 
     pub fn set_circuit_breaker_state(&self, provider: &str, state: i64) {
-        self.circuit_breaker_state.with_label_values(&[provider]).set(state);
+        self.circuit_breaker_state
+            .with_label_values(&[provider])
+            .set(state);
     }
 
     pub fn set_rate_limit_remaining(&self, tenant: &str, remaining: i64) {
-        self.rate_limit_remaining.with_label_values(&[tenant]).set(remaining);
+        self.rate_limit_remaining
+            .with_label_values(&[tenant])
+            .set(remaining);
     }
 
     pub fn render(&self) -> String {
         let encoder = TextEncoder::new();
         let metric_families = self.registry.gather();
         let mut buf = Vec::new();
-        encoder.encode(&metric_families, &mut buf).expect("encode metrics");
+        encoder
+            .encode(&metric_families, &mut buf)
+            .expect("encode metrics");
         String::from_utf8(buf).unwrap_or_default()
     }
 }

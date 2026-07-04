@@ -74,7 +74,9 @@ impl GatewayError {
     /// Build an OpenAI-format error response body.
     pub fn to_error_response(&self) -> ErrorResponse {
         let code = match self {
-            GatewayError::QuotaExceeded { limit_type, .. } => Some(format!("quota_exceeded:{}", limit_type)),
+            GatewayError::QuotaExceeded { limit_type, .. } => {
+                Some(format!("quota_exceeded:{}", limit_type))
+            }
             GatewayError::RateLimited => Some("rate_limit_exceeded".into()),
             GatewayError::AuthenticationFailed(_) => Some("authentication_error".into()),
             GatewayError::Forbidden(_) => Some("insufficient_permissions".into()),

@@ -7,7 +7,9 @@ pub mod provider;
 pub mod tenant;
 pub mod types;
 
-pub use audit::{AuditAction, AuditActor, AuditError, AuditEvent, AuditFilter, AuditPage, AuditWriter};
+pub use audit::{
+    AuditAction, AuditActor, AuditError, AuditEvent, AuditFilter, AuditPage, AuditWriter,
+};
 pub use config::AppConfig;
 pub use error::GatewayError;
 pub use metering::RateCard;

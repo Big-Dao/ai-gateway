@@ -1,7 +1,9 @@
 mod common;
 use common::TestServer;
 
-fn u(s: &TestServer, p: &str) -> String { format!("{}{p}", s.base_url) }
+fn u(s: &TestServer, p: &str) -> String {
+    format!("{}{p}", s.base_url)
+}
 
 #[tokio::test]
 async fn mvp3_metrics_content_type_text_plain() {
@@ -9,7 +11,10 @@ async fn mvp3_metrics_content_type_text_plain() {
     let r = reqwest::get(u(&s, "/metrics")).await.unwrap();
     assert_eq!(r.status(), reqwest::StatusCode::OK);
     let ct = r.headers().get("content-type").unwrap().to_str().unwrap();
-    assert!(ct.starts_with("text/plain"), "expected text/plain, got {ct}");
+    assert!(
+        ct.starts_with("text/plain"),
+        "expected text/plain, got {ct}"
+    );
 }
 
 #[tokio::test]
@@ -38,7 +43,10 @@ async fn mvp3_metrics_contains_requests_total() {
         "gateway_circuit_breaker_state",
         "gateway_rate_limit_remaining",
     ] {
-        assert!(body.contains(metric), "missing metric: {metric},\nbody:\n{body}");
+        assert!(
+            body.contains(metric),
+            "missing metric: {metric},\nbody:\n{body}"
+        );
     }
 
     // Verify the output format looks like Prometheus text exposition

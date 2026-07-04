@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::tenant::Role;
 
@@ -242,6 +244,64 @@ impl AuditWriter for NoopAuditWriter {
     }
 }
 
+/// Append-only JSON-lines file audit writer.
+///
+/// Each audit event is serialized to a single JSON line and appended to the
+/// configured file. File I/O is dispatched to a blocking task so the async
+/// request path never waits on disk. A `std::sync::Mutex` serializes writes;
+/// for the MVP this is sufficient because admin-handler volume is low.
+pub struct FileAuditWriter {
+    inner: Arc<std::sync::Mutex<PathBuf>>,
+}
+
+impl FileAuditWriter {
+    /// Create a new writer that appends to `path`. The file is created if it
+    /// does not yet exist (along with any missing parent directories).
+    pub fn new(path: PathBuf) -> std::io::Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // Touch the file so the path is valid from construction time.
+        if !path.exists() {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)?;
+        }
+        Ok(Self {
+            inner: Arc::new(std::sync::Mutex::new(path)),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl AuditWriter for FileAuditWriter {
+    async fn append(&self, event: AuditEvent) -> Result<(), AuditError> {
+        let line = serde_json::to_string(&event)?;
+        let path = {
+            let guard = self
+                .inner
+                .lock()
+                .map_err(|e| AuditError::Internal(format!("audit lock poisoned: {e}")))?;
+            guard.clone()
+        };
+
+        // Move the blocking file write off the async runtime.
+        tokio::task::spawn_blocking(move || {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|e| AuditError::Io(e.to_string()))?;
+            writeln!(f, "{line}").map_err(|e| AuditError::Io(e.to_string()))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| AuditError::Internal(format!("spawn_blocking join error: {e}")))?
+    }
+}
+
 /// Filter criteria for querying audit logs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditFilter {
@@ -309,7 +369,10 @@ mod tests {
 
     #[test]
     fn test_audit_action_display() {
-        assert_eq!(format!("{}", AuditAction::AuthLoginSuccess), "auth.login_success");
+        assert_eq!(
+            format!("{}", AuditAction::AuthLoginSuccess),
+            "auth.login_success"
+        );
         assert_eq!(format!("{}", AuditAction::TenantCreate), "tenant.create");
         assert_eq!(format!("{}", AuditAction::ConfigUpdate), "config.update");
     }
@@ -346,8 +409,8 @@ mod tests {
     #[test]
     fn test_audit_event_failure() {
         let actor = AuditActor::system();
-        let event = AuditEvent::new(AuditAction::KeyRevoke, actor, "default")
-            .with_error("Key not found");
+        let event =
+            AuditEvent::new(AuditAction::KeyRevoke, actor, "default").with_error("Key not found");
 
         assert!(!event.success);
         assert_eq!(event.error.as_deref(), Some("Key not found"));
@@ -363,8 +426,8 @@ mod tests {
     #[test]
     fn test_audit_event_serialization() {
         let actor = AuditActor::user("key-abc", Role::TENANT_ADMIN).with_ip("10.0.0.1");
-        let event = AuditEvent::new(AuditAction::ProviderUpdate, actor, "tenant-x")
-            .with_resource("openai");
+        let event =
+            AuditEvent::new(AuditAction::ProviderUpdate, actor, "tenant-x").with_resource("openai");
 
         let json = serde_json::to_string(&event).unwrap();
         let deserialized: AuditEvent = serde_json::from_str(&json).unwrap();
@@ -388,5 +451,40 @@ mod tests {
         let filter = AuditFilter::default();
         assert_eq!(filter.limit, 100);
         assert_eq!(filter.offset, 0);
+    }
+
+    #[tokio::test]
+    async fn test_file_audit_writer_roundtrip() {
+        let dir = std::env::temp_dir().join("ai-gateway-test-audit");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("audit.jsonl");
+        let writer = FileAuditWriter::new(path.clone()).unwrap();
+
+        let actor = AuditActor::user("key-abc", Role::ADMIN).with_ip("10.0.0.1");
+        let event = AuditEvent::new(AuditAction::TenantCreate, actor, "acme-corp")
+            .with_resource("acme-corp")
+            .with_success();
+        let event_id = event.id.clone();
+        writer.append(event).await.unwrap();
+
+        let actor2 = AuditActor::system();
+        let event2 =
+            AuditEvent::new(AuditAction::KeyRevoke, actor2, "default").with_error("Key not found");
+        writer.append(event2).await.unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 2, "two events = two JSONL lines");
+
+        let first: AuditEvent = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(first.id, event_id);
+        assert_eq!(first.action, AuditAction::TenantCreate);
+        assert_eq!(first.tenant, "acme-corp");
+
+        let second: AuditEvent = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(second.action, AuditAction::KeyRevoke);
+        assert!(!second.success);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{info, warn, instrument};
+use tracing::{info, instrument, warn};
 
 use gateway_core::error::GatewayError;
 use gateway_core::provider::LLMProvider;
@@ -83,13 +83,10 @@ pub async fn chat_completion_with_retry(
         attempt_info.provider_name = provider_name.clone();
         attempt_info.is_fallback = is_fallback;
 
-        // Get the provider instance.
-        let provider = {
-            let providers = state.providers.read().await;
-            match providers.get(&model) {
-                Some(p) => p.clone(),
-                None => continue,
-            }
+        // Get the provider instance by name (not model) so fallback works.
+        let provider = match state.get_provider_by_name(provider_name).await {
+            Some(p) => p,
+            None => continue,
         };
 
         // Retry loop for this provider.
@@ -181,12 +178,9 @@ pub async fn chat_completion_stream_with_retry(
         attempt_info.provider_name = provider_name.clone();
         attempt_info.is_fallback = is_fallback;
 
-        let provider = {
-            let providers = state.providers.read().await;
-            match providers.get(&model) {
-                Some(p) => p.clone(),
-                None => continue,
-            }
+        let provider = match state.get_provider_by_name(provider_name).await {
+            Some(p) => p,
+            None => continue,
         };
 
         // For streaming, we don't do multi-attempt retry within a provider
@@ -246,7 +240,11 @@ fn is_retryable(error: &GatewayError) -> bool {
         // Timeouts and upstream errors are retryable.
         GatewayError::UpstreamError(msg) => {
             // Don't retry client errors (4xx except 429).
-            if msg.contains("400") || msg.contains("401") || msg.contains("403") || msg.contains("404") {
+            if msg.contains("400")
+                || msg.contains("401")
+                || msg.contains("403")
+                || msg.contains("404")
+            {
                 false
             } else {
                 true

@@ -23,7 +23,9 @@ async fn wait() {
 #[tokio::test]
 async fn mvp0_unauthenticated_returns_401() {
     let server = TestServer::spawn(&["test-key-123"]).await;
-    let resp = reqwest::get(url(&server, "/v1/models")).await.expect("request");
+    let resp = reqwest::get(url(&server, "/v1/models"))
+        .await
+        .expect("request");
     assert_eq!(
         resp.status(),
         reqwest::StatusCode::UNAUTHORIZED,
@@ -59,7 +61,9 @@ async fn mvp0_authenticated_succeeds() {
 #[tokio::test]
 async fn mvp0_healthz_works() {
     let server = TestServer::spawn(&["test-key-123"]).await;
-    let resp = reqwest::get(url(&server, "/healthz")).await.expect("request");
+    let resp = reqwest::get(url(&server, "/healthz"))
+        .await
+        .expect("request");
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let body = resp.text().await.unwrap();
     assert_eq!(body.trim(), "ok");
@@ -68,7 +72,9 @@ async fn mvp0_healthz_works() {
 #[tokio::test]
 async fn mvp0_readyz_works() {
     let server = TestServer::spawn(&["test-key-123"]).await;
-    let resp = reqwest::get(url(&server, "/readyz")).await.expect("request");
+    let resp = reqwest::get(url(&server, "/readyz"))
+        .await
+        .expect("request");
     // The server's readiness returns 200 when config is loaded and the
     // circuit breaker defaults are accepting. Immediately after /healthz,
     // that must be true.
@@ -89,11 +95,8 @@ async fn mvp0_env_override_port() {
     // ephemeral range to avoid colliding with other services.
     let picked = 19000u16;
     let _ = std::net::TcpListener::bind(format!("127.0.0.1:{picked}")); // probes freeness
-    let _server = TestServer::spawn_with(
-        &["test-key-123"],
-        &[("SERVER__PORT", picked.to_string())],
-    )
-    .await;
+    let _server =
+        TestServer::spawn_with(&["test-key-123"], &[("SERVER__PORT", picked.to_string())]).await;
     // The env override should make the server bind to `19000`. We assert by
     // directly probing the fixed port instead of trusting base_url (which was
     // picked by spawn_with before we knew TOML was actually overridden).
@@ -139,7 +142,7 @@ async fn mvp0_rate_limit_small() {
         statuses
     );
     // Every response should ALSO have a Retry-After header (set by x_request_id
-        // middleware on 429s).
+    // middleware on 429s).
     let resp = client
         .get(url(&server, "/v1/models"))
         .bearer_auth(api_key)
@@ -161,16 +164,31 @@ async fn mvp0_request_id_header() {
     let client = reqwest::Client::new();
 
     // Healthz path (no auth required) — simplest guaranteed-200 case.
-    let resp = client.get(url(&server, "/healthz")).send().await.expect("request");
+    let resp = client
+        .get(url(&server, "/healthz"))
+        .send()
+        .await
+        .expect("request");
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
-    let rid = resp.headers().get("x-request-id")
+    let rid = resp
+        .headers()
+        .get("x-request-id")
         .expect("every response must have x-request-id");
     let rid_str = rid.to_str().expect("header is ASCII");
     // Header value should be a UUID v4 (36 chars w/ hyphens).
-    assert_eq!(rid_str.len(), 36, "x-request-id should be a UUID v4, got {rid_str:?}");
+    assert_eq!(
+        rid_str.len(),
+        36,
+        "x-request-id should be a UUID v4, got {rid_str:?}"
+    );
 
     // Auth-gated path — the middleware chain must still add the header.
-    let resp = client.get(url(&server, "/v1/models")).bearer_auth(api_key).send().await.expect("request");
+    let resp = client
+        .get(url(&server, "/v1/models"))
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .expect("request");
     assert!(
         resp.headers().get("x-request-id").is_some(),
         "authenticated responses must carry x-request-id"
@@ -178,7 +196,11 @@ async fn mvp0_request_id_header() {
 
     // 401 responses (missing auth) should ALSO carry the header, proving
     // the outermost middleware (x_request_id) precedes auth.
-    let resp = client.get(url(&server, "/v1/models")).send().await.expect("request");
+    let resp = client
+        .get(url(&server, "/v1/models"))
+        .send()
+        .await
+        .expect("request");
     assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
     assert!(
         resp.headers().get("x-request-id").is_some(),

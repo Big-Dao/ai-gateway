@@ -17,6 +17,10 @@ pub struct AppConfig {
     /// Platform-wide default rate card (cost per 1M tokens) for metering.
     #[serde(default)]
     pub rate_config: Option<crate::metering::RateCard>,
+    /// When set, audit events are appended as JSON lines to this path.
+    /// Parent directories are created on startup.
+    #[serde(default)]
+    pub audit_path: Option<String>,
 }
 
 /// Per-provider behavioral tweaks for OpenAI-compatible providers.

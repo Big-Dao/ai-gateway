@@ -1,7 +1,7 @@
+use crate::error::GatewayError;
+use crate::types::{ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use crate::error::GatewayError;
-use crate::types::{ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChunk};
 
 /// Type alias for the streaming response type.
 pub type ChunkStream = BoxStream<'static, Result<ChatCompletionChunk, GatewayError>>;

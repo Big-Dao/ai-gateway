@@ -4,7 +4,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{info, error};
+use tracing::{error, info};
 
 use gateway_core::error::GatewayError;
 use gateway_core::provider::LLMProvider;
@@ -143,10 +143,7 @@ impl AnthropicProvider {
         }
         if let Some(key) = &self.api_key {
             if let Ok(value) = HeaderValue::from_str(key) {
-                headers.insert(
-                    reqwest::header::HeaderName::from_static("x-api-key"),
-                    value,
-                );
+                headers.insert(reqwest::header::HeaderName::from_static("x-api-key"), value);
             }
         }
         headers
@@ -164,7 +161,11 @@ impl AnthropicProvider {
                 }
                 continue;
             }
-            let role = if msg.role == "assistant" { "assistant" } else { "user" };
+            let role = if msg.role == "assistant" {
+                "assistant"
+            } else {
+                "user"
+            };
             let content = match &msg.content {
                 Some(Content::Text(t)) => t.as_str(),
                 Some(Content::Parts(parts)) => {
@@ -255,7 +256,10 @@ impl LLMProvider for AnthropicProvider {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             error!(%status, %body, "Anthropic upstream error");
-            return Err(GatewayError::UpstreamError(format!("Anthropic {}: {}", status, body)));
+            return Err(GatewayError::UpstreamError(format!(
+                "Anthropic {}: {}",
+                status, body
+            )));
         }
 
         let anthro_resp = resp
@@ -269,7 +273,10 @@ impl LLMProvider for AnthropicProvider {
     async fn chat_completion_stream(
         &self,
         request: ChatCompletionRequest,
-    ) -> Result<futures::stream::BoxStream<'static, Result<ChatCompletionChunk, GatewayError>>, GatewayError> {
+    ) -> Result<
+        futures::stream::BoxStream<'static, Result<ChatCompletionChunk, GatewayError>>,
+        GatewayError,
+    > {
         let mut anthro_req = self.convert_request(&request);
         anthro_req.stream = true;
 
@@ -288,7 +295,10 @@ impl LLMProvider for AnthropicProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::UpstreamError(format!("Anthropic {}: {}", status, body)));
+            return Err(GatewayError::UpstreamError(format!(
+                "Anthropic {}: {}",
+                status, body
+            )));
         }
 
         let stream = resp.bytes_stream();
@@ -311,7 +321,9 @@ impl LLMProvider for AnthropicProvider {
                             }
                             if line.starts_with("data: ") {
                                 let data = &line[6..];
-                                if let Ok(event) = serde_json::from_str::<AnthropicStreamEvent>(data) {
+                                if let Ok(event) =
+                                    serde_json::from_str::<AnthropicStreamEvent>(data)
+                                {
                                     match event.event_type.as_str() {
                                         "message_start" => {
                                             if let Some(ref msg) = event.message {
@@ -322,9 +334,14 @@ impl LLMProvider for AnthropicProvider {
                                             if let Some(ref delta) = event.delta {
                                                 if let Some(ref text) = delta.text {
                                                     let id = message_id.lock().unwrap().clone();
-                                                    results.push(Ok(ChatCompletionChunk::new_delta(
-                                                        &model, &id, Some(text.clone()), None,
-                                                    )));
+                                                    results.push(Ok(
+                                                        ChatCompletionChunk::new_delta(
+                                                            &model,
+                                                            &id,
+                                                            Some(text.clone()),
+                                                            None,
+                                                        ),
+                                                    ));
                                                 }
                                             }
                                         }
@@ -334,7 +351,10 @@ impl LLMProvider for AnthropicProvider {
                                         "message_stop" => {
                                             let id = message_id.lock().unwrap().clone();
                                             results.push(Ok(ChatCompletionChunk::new_delta(
-                                                &model, &id, None, Some("stop".into()),
+                                                &model,
+                                                &id,
+                                                None,
+                                                Some("stop".into()),
                                             )));
                                         }
                                         _ => {}

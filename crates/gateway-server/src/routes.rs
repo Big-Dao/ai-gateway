@@ -1,29 +1,32 @@
 use axum::{
+    extract::{Json, State},
+    http::{HeaderMap, StatusCode},
+    middleware as axum_middleware,
+    response::{
+        sse::{Event, Sse},
+        IntoResponse, Response,
+    },
     routing::{get, post},
     Router,
-    extract::{State, Json},
-    response::{IntoResponse, Response, sse::{Sse, Event}},
-    http::{StatusCode, HeaderMap},
-    middleware as axum_middleware,
 };
 use futures::StreamExt;
 use serde_json::json;
-use std::sync::Arc;
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
-use axum::Extension;
-use gateway_core::error::GatewayError;
-use gateway_core::tenant::TenantContext;
-use gateway_core::types::*;
 use crate::metrics::metering::{MeteringEvent, RequestStatus};
-use crate::state::AppState;
-use crate::retry::{chat_completion_with_retry, chat_completion_stream_with_retry, RetryConfig};
 use crate::middleware::auth::auth_middleware;
 use crate::middleware::quota_middleware::quota_middleware;
 use crate::middleware::rate_limit::rate_limit_middleware;
 use crate::middleware::x_request_id::x_request_id_middleware;
+use crate::retry::{chat_completion_stream_with_retry, chat_completion_with_retry, RetryConfig};
+use crate::state::AppState;
+use axum::Extension;
+use gateway_core::error::GatewayError;
+use gateway_core::tenant::TenantContext;
+use gateway_core::types::*;
 
 /// Wrapper that converts GatewayError into an OpenAI-format HTTP response.
 pub struct ApiError(pub GatewayError);
@@ -58,22 +61,30 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .nest("/api/admin", crate::admin::admin_router())
         // Admin UI (served at /admin)
         .route("/admin", get(crate::static_files::admin_page))
-        .route("/admin/static/admin.css", get(crate::static_files::admin_css))
+        .route(
+            "/admin/static/admin.css",
+            get(crate::static_files::admin_css),
+        )
         .route("/admin/static/admin.js", get(crate::static_files::admin_js))
-        // Auth middleware — mounted last-to-first via .layer on the fully-typed router.
         .with_state(state.clone())
-        .layer(axum_middleware::from_fn_with_state(state.clone(), auth_middleware))
-        // Rate-limit middleware runs after auth: authenticated callers are what
-        // we want to throttle, not credential-guessing traffic.
+        // In axum the LAST `.layer()` call wraps all previous layers and
+        // therefore runs FIRST on each request. We list middleware in the
+        // reverse of the desired execution order:
+        //
+        //   Execution (outside → in): x_request_id → auth → rate_limit → quota → handler
+        //   Registration order:       quota → rate_limit → auth → x_request_id (last)
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            quota_middleware,
+        ))
         .layer(axum_middleware::from_fn_with_state(
             state.rate_limiter.clone(),
             rate_limit_middleware,
         ))
-        // Request-meta middleware: outermost layer so it wraps every response
-        // (including 401s produced by auth & 429s produced by rate-limit) with
-        // `X-Request-Id` + `Retry-After` headers for retries.
-        // MVP 2 quota middleware (disabled for now, tested via direct API)
-        // Request-meta middleware: outermost layer
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
         .layer(axum_middleware::from_fn(x_request_id_middleware))
 }
 
@@ -183,7 +194,9 @@ pub async fn deep_health(State(state): State<Arc<AppState>>) -> impl IntoRespons
 /// List available models.
 async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     // Record a Prometheus sample so the request_total counter appears in /metrics
-    state.prometheus.record_request("list_models", "internal", "default", "developer", false);
+    state
+        .prometheus
+        .record_request("list_models", "internal", "default", "developer", false);
 
     let mut models = Vec::new();
     let providers = state.providers.read().await;
@@ -205,9 +218,13 @@ async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 /// Prometheus /metrics endpoint.
 async fn get_metrics(State(state): State<Arc<AppState>>) -> axum::response::Response {
     (
-        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
         state.prometheus.render(),
-    ).into_response()
+    )
+        .into_response()
 }
 
 /// Main chat completions endpoint with retry, circuit breaker, and fallback.
@@ -229,9 +246,13 @@ async fn chat_completions(
 
     // Streaming path — with retry & fallback
     if stream {
-        let result =
-            chat_completion_stream_with_retry(&state, &state.circuit_breaker, &retry_config, payload)
-                .await;
+        let result = chat_completion_stream_with_retry(
+            &state,
+            &state.circuit_breaker,
+            &retry_config,
+            payload,
+        )
+        .await;
 
         let (stream, _attempt_info) = match result {
             Ok(res) => res,
@@ -285,7 +306,15 @@ async fn chat_completions(
 
         // Record metrics (global aggregate + per-tenant metering)
         state.record_usage(&response.model, &usage).await;
-        record_metering(&state, &attempt_info.provider_name, &response.model, &usage, true, &tenant_ctx.tenant_id).await;
+        record_metering(
+            &state,
+            &attempt_info.provider_name,
+            &response.model,
+            &usage,
+            true,
+            &tenant_ctx.tenant_id,
+        )
+        .await;
 
         info!(
             provider = %attempt_info.provider_name,
@@ -304,7 +333,15 @@ async fn chat_completions(
 
         let usage = response.usage.clone();
         state.record_usage(&response.model, &usage).await;
-        record_metering(&state, &attempt_info.provider_name, &response.model, &usage, true, &tenant_ctx.tenant_id).await;
+        record_metering(
+            &state,
+            &attempt_info.provider_name,
+            &response.model,
+            &usage,
+            true,
+            &tenant_ctx.tenant_id,
+        )
+        .await;
 
         info!(
             provider = %attempt_info.provider_name,
@@ -330,7 +367,14 @@ async fn record_metering(
     success: bool,
     tenant_id: &str,
 ) {
-    let estimated_cost = 0.0; // TODO: look up rate card once rate_card is plumbed through AppState
+    let estimated_cost_cents = {
+        let config = state.config.read().await;
+        config
+            .rate_config
+            .as_ref()
+            .map(|card| card.estimate_cost(usage) as f64)
+            .unwrap_or(0.0)
+    };
 
     let event = MeteringEvent {
         timestamp_ms: std::time::SystemTime::now()
@@ -348,7 +392,7 @@ async fn record_metering(
         } else {
             RequestStatus::Error
         },
-        estimated_cost_cents: estimated_cost,
+        estimated_cost_cents,
     };
 
     state.metering.record(event).await;

@@ -1,6 +1,6 @@
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use rand::RngCore;
+use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -54,8 +54,7 @@ impl ApiKeyEntry {
     }
 
     pub fn compute_hash(salt: &Salt, key: &str) -> String {
-        let mut mac = HmacSha256::new_from_slice(&salt.0)
-            .expect("HMAC can take key of any size");
+        let mut mac = HmacSha256::new_from_slice(&salt.0).expect("HMAC can take key of any size");
         mac.update(key.as_bytes());
         let result = mac.finalize();
         hex::encode(result.into_bytes())

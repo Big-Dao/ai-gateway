@@ -1,8 +1,8 @@
 use axum::{
     extract::{Request, State},
+    http::{self, header},
     middleware::Next,
     response::{IntoResponse, Response},
-    http::{self, header},
     Json,
 };
 use std::sync::Arc;
@@ -25,8 +25,14 @@ fn error_response(e: GatewayError) -> Response {
 
 /// Paths excluded from auth — K8s load balancers, health monitors, our
 /// own smoke tests, and the Admin UI (page + static assets) hit these unauthenticated.
-const UNAUTHENTICATED_PATHS: &[&str] = &["/healthz", "/readyz", "/deep-health", "/health", "/metrics"];
-const UNAUTHENTICATED_PREFIXES: &[&str] = &["/admin", "/metrics"];
+const UNAUTHENTICATED_PATHS: &[&str] =
+    &["/healthz", "/readyz", "/deep-health", "/health", "/metrics"];
+const UNAUTHENTICATED_PREFIXES: &[&str] = &[
+    // Admin JS/CSS assets don't contain secrets, so they're served without
+    // auth. The HTML page at /admin and all /api/admin/* REST endpoints
+    // require a valid Bearer token.
+    "/admin/static",
+];
 
 /// Authentication middleware — validates the Bearer token against the HMAC store.
 pub async fn auth_middleware(
@@ -55,7 +61,9 @@ pub async fn auth_middleware(
                 let store = state.auth_store.read().await;
                 if let Some(entry) = store.verify(key) {
                     // Inject the key_id fingerprint for downstream handlers.
-                    request.extensions_mut().insert(AuthKey(entry.key_id.clone()));
+                    request
+                        .extensions_mut()
+                        .insert(AuthKey(entry.key_id.clone()));
                     // Inject tenant context (MVP 1).
                     request.extensions_mut().insert(TenantContext {
                         tenant_id: entry.tenant_id.clone(),

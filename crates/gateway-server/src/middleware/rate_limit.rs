@@ -14,15 +14,18 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::{
+    collections::HashMap,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU32, AtomicU64, Ordering},
         Arc,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::Mutex;
 use tracing::warn;
 
 use gateway_core::error::GatewayError;
+use gateway_core::tenant::TenantContext;
 
 /// Scale factor: 1 logical token = MICRO tokens.
 const MICRO: u64 = 1_000;
@@ -172,18 +175,67 @@ fn current_time_ms() -> u64 {
 /// never be throttled even if a tenant is in the middle of a 429 window.
 const UNLIMITED_PATHS: &[&str] = &["/healthz", "/readyz", "/deep-health", "/health"];
 
+/// Per-tenant rate-limiter state.
+///
+/// Each tenant gets its own [`TokenBucket`]; the map is keyed by tenant id
+/// and protected by a `Mutex` — the MVP maintains a small number of tenants
+/// so the lock is uncontended in practice.
+pub struct RateLimiter {
+    buckets: Mutex<HashMap<String, Arc<TokenBucket>>>,
+    /// Atomic so the admin API can update it at runtime via `&self`.
+    default_rpm: AtomicU32,
+}
+
+impl RateLimiter {
+    pub fn new(default_rpm: u32) -> Self {
+        Self {
+            buckets: Mutex::new(HashMap::new()),
+            default_rpm: AtomicU32::new(default_rpm),
+        }
+    }
+
+    /// Update the default RPM. Existing buckets are untouched — only
+    /// buckets created AFTER this call use the new value.
+    pub fn set_default_rpm(&self, rpm: u32) {
+        self.default_rpm.store(rpm, Ordering::SeqCst);
+    }
+
+    /// Get (or lazily create) the bucket for a tenant.
+    async fn bucket_for(&self, tenant_id: &str) -> Arc<TokenBucket> {
+        let mut map = self.buckets.lock().await;
+        if let Some(b) = map.get(tenant_id) {
+            return b.clone();
+        }
+        let rpm = self.default_rpm.load(Ordering::Relaxed);
+        let bucket = Arc::new(TokenBucket::new(rpm));
+        map.insert(tenant_id.to_string(), bucket.clone());
+        bucket
+    }
+}
+
 /// Axum middleware that consumes one token per request and returns HTTP 429
-/// with `Retry-After` when the bucket is empty.
+/// with `Retry-After` when the tenant's bucket is empty. Unauthenticated
+/// requests (no `TenantContext` extension) fall back to a shared "global"
+/// bucket so credential-guessing traffic is still throttled.
 pub async fn rate_limit_middleware(
-    State(bucket): State<Arc<TokenBucket>>,
+    State(limiter): State<Arc<RateLimiter>>,
     request: Request,
     next: Next,
 ) -> Response {
     if UNLIMITED_PATHS.iter().any(|p| request.uri().path() == *p) {
         return next.run(request).await;
     }
+
+    let tenant_id = request
+        .extensions()
+        .get::<TenantContext>()
+        .map(|c| c.tenant_id.clone())
+        .unwrap_or_else(|| "__unauthenticated__".to_string());
+
+    let bucket = limiter.bucket_for(&tenant_id).await;
+
     if let Some(wait) = bucket.consume() {
-        warn!(?wait, "Request rate-limited");
+        warn!(tenant = %tenant_id, ?wait, "Request rate-limited");
         let detail = GatewayError::RateLimited.to_error_response();
         let mut resp = (http::StatusCode::TOO_MANY_REQUESTS, axum::Json(detail)).into_response();
         let seconds = wait.as_secs().max(1);
