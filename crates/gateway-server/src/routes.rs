@@ -246,6 +246,8 @@ async fn chat_completions(
 
     // Streaming path — with retry & fallback
     if stream {
+        // Estimate prompt tokens *before* `payload` is moved into the retry call.
+        let est_prompt = estimate_prompt_tokens(&payload);
         let result = chat_completion_stream_with_retry(
             &state,
             &state.circuit_breaker,
@@ -254,13 +256,34 @@ async fn chat_completions(
         )
         .await;
 
-        let (stream, _attempt_info) = match result {
+        let (stream, attempt_info) = match result {
             Ok(res) => res,
             Err(e) => {
                 warn!(error = %e, "All providers failed for streaming request");
                 return Err(ApiError(e));
             }
         };
+
+        // Record metering for the streaming request. Per-token accuracy for
+        // streaming requires the upstream to emit a final `usage` chunk
+        // (OpenAI stream_options.include_usage), which is not universally
+        // supported; we charge an estimated prompt-token count so streaming
+        // requests are no longer invisible to billing. Completion tokens are
+        // counted as 0 until the upstream usage chunk is consumed (TODO).
+        record_metering(
+            &state,
+            &attempt_info.provider_name,
+            &model,
+            &Usage {
+                prompt_tokens: est_prompt,
+                completion_tokens: 0,
+                total_tokens: est_prompt,
+            },
+            true,
+            &tenant_ctx.tenant_id,
+            &tenant_ctx.key_id,
+        )
+        .await;
 
         let sse = stream.map(|item| match item {
             Ok(chunk) => {
@@ -313,6 +336,7 @@ async fn chat_completions(
             &usage,
             true,
             &tenant_ctx.tenant_id,
+            &tenant_ctx.key_id,
         )
         .await;
 
@@ -340,6 +364,7 @@ async fn chat_completions(
             &usage,
             true,
             &tenant_ctx.tenant_id,
+            &tenant_ctx.key_id,
         )
         .await;
 
@@ -366,6 +391,7 @@ async fn record_metering(
     usage: &Usage,
     success: bool,
     tenant_id: &str,
+    key_id: &str,
 ) {
     let (estimated_cost_cents, cost_alert_threshold_cents) = {
         let config = state.config.read().await;
@@ -384,11 +410,9 @@ async fn record_metering(
             .unwrap_or_default()
             .as_millis() as u64,
         tenant_id: tenant_id.to_string(),
-        // TODO(MVP6): wire real key_id from AuthKey — currently TenantContext
-        // does not carry the authenticated key fingerprint; it is injected by
-        // auth_middleware. Either thread `key_id` through TenantContext or look
-        // it up here via state.auth.verify_by_id(&ctx.key_id).
-        key_id: "_from_routes_".into(),
+        // Authenticated key fingerprint, threaded from TenantContext by
+        // auth_middleware. Drives per-key cost attribution.
+        key_id: key_id.to_string(),
         model: model.into(),
         provider: provider_name.into(),
         prompt_tokens: usage.prompt_tokens as u64,
@@ -405,6 +429,24 @@ async fn record_metering(
         .metering
         .record(event, cost_alert_threshold_cents)
         .await;
+}
+
+/// Rough prompt-token estimate (≈ chars/4) used to meter streaming requests
+/// whose real per-token usage is not available until the final SSE chunk.
+fn estimate_prompt_tokens(req: &ChatCompletionRequest) -> u32 {
+    let chars: usize = req
+        .messages
+        .iter()
+        .map(|m| match &m.content {
+            Some(Content::Text(t)) => t.len(),
+            Some(Content::Parts(parts)) => parts
+                .iter()
+                .map(|p| p.text.as_ref().map(|t| t.len()).unwrap_or(0))
+                .sum(),
+            None => 0,
+        })
+        .sum();
+    (chars / 4).try_into().unwrap_or(u32::MAX)
 }
 
 /// Compute a cache key from the request (model + messages).
