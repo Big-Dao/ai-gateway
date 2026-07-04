@@ -10,7 +10,7 @@ mod state;
 mod static_files;
 
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 
 use gateway_core::config::AppConfig;
 
@@ -56,15 +56,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(state::AppState::new(config).await?)
     };
 
-    // Secure startup check: refuse to start with auth enabled but no keys
+    // Secure startup check: refuse to start with auth enabled but no keys,
+    // and warn loudly if any well-known weak/default key is configured (S2).
     if state.config.read().await.auth.enabled {
         let store = state.auth_store.read().await;
         if store.list_ids().is_empty() {
             eprintln!(
                 "Refusing to start: auth.enabled=true but no API keys configured.\n\
-                 Either set [auth].api_keys in config.toml or set AUTH_ENABLED=false."
+                 Either set [auth].api_keys in config.toml or set AI_GATEWAY__AUTH__ENABLED=false."
             );
             std::process::exit(1);
+        }
+        const KNOWN_WEAK: &[&str] = &[
+            "test-key",
+            "my-secret-key",
+            "another-key",
+            "REPLACE_ME",
+            "changeme",
+        ];
+        for weak in KNOWN_WEAK {
+            if store.verify(weak).is_some() {
+                warn!(
+                    key = %weak,
+                    "SECURITY: a well-known weak/default API key is configured; \
+                     replace it before exposing this gateway to untrusted clients"
+                );
+            }
         }
     }
 
@@ -78,6 +95,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     info!(address = %addr, "AI Gateway listening");
+
+    // Transport-security notice (S2): the gateway binds plain HTTP. API keys
+    // and request bodies traverse the network in cleartext unless TLS is
+    // terminated by a reverse proxy (nginx / envoy / ALB) in front of it.
+    {
+        let cfg = state.config.read().await;
+        if cfg.server.host != "127.0.0.1" && cfg.server.host != "localhost" {
+            warn!(
+                address = %addr,
+                "SECURITY: plain-HTTP listener on a non-loopback interface. \
+                 Terminate TLS at a reverse proxy before exposing to untrusted \
+                 networks — otherwise API keys are transmitted in cleartext."
+            );
+        }
+    }
     info!(
         admin_url = format!("http://{}/admin", addr),
         "Admin UI ready"

@@ -8,7 +8,13 @@ fn u(s: &TestServer, p: &str) -> String {
 #[tokio::test]
 async fn mvp3_metrics_content_type_text_plain() {
     let s = TestServer::spawn(&["test-key"]).await;
-    let r = reqwest::get(u(&s, "/metrics")).await.unwrap();
+    // /metrics now requires authentication (S2) — supply a valid key.
+    let r = reqwest::Client::new()
+        .get(u(&s, "/metrics"))
+        .bearer_auth("test-key")
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), reqwest::StatusCode::OK);
     let ct = r.headers().get("content-type").unwrap().to_str().unwrap();
     assert!(
@@ -27,7 +33,13 @@ async fn mvp3_metrics_contains_requests_total() {
         .send()
         .await;
 
-    let r = reqwest::get(u(&s, "/metrics")).await.unwrap();
+    // /metrics now requires authentication (S2).
+    let r = reqwest::Client::new()
+        .get(u(&s, "/metrics"))
+        .bearer_auth("test-key")
+        .send()
+        .await
+        .unwrap();
     let body: &str = &r.text().await.unwrap();
 
     // ALL 9 metrics declared in PrometheusExporter should render (even with zero values)
