@@ -153,29 +153,44 @@ impl AppState {
         // reset that zeroed cost on every boot). Otherwise (no metering_path,
         // e.g. in tests) fall back to clearing the in-memory window.
         if let Some(path) = &config.metering_path {
-            let store = Arc::new(crate::persistence::FileMeteringStore::new(
-                std::path::PathBuf::from(path),
-            ));
-            match store.load().await {
-                Ok(events) => {
-                    let n = events.len();
-                    metering.load_events(events).await;
-                    tracing::info!(
-                        target: "billing",
-                        events_loaded = n,
-                        "replayed persisted metering events"
-                    );
+            // Defense-in-depth: metering_path is operator config (not end-user
+            // input), but reject ".." components so a misconfigured or env-
+            // injected path can't traverse out of the intended directory.
+            let unsafe_path = std::path::Path::new(path)
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir));
+            if unsafe_path {
+                tracing::warn!(
+                    target: "billing",
+                    metering_path = %path,
+                    "metering_path contains '..'; ignoring persistence (in-memory only)"
+                );
+                metering.reset_billing_window().await;
+            } else {
+                let store = Arc::new(crate::persistence::FileMeteringStore::new(
+                    std::path::PathBuf::from(path),
+                ));
+                match store.load().await {
+                    Ok(events) => {
+                        let n = events.len();
+                        metering.load_events(events).await;
+                        tracing::info!(
+                            target: "billing",
+                            events_loaded = n,
+                            "replayed persisted metering events"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "billing",
+                            error = %e,
+                            "failed to load metering store; starting fresh"
+                        );
+                        metering.reset_billing_window().await;
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "billing",
-                        error = %e,
-                        "failed to load metering store; starting fresh"
-                    );
-                    metering.reset_billing_window().await;
-                }
+                metering.set_store(store);
             }
-            metering.set_store(store);
         } else {
             metering.reset_billing_window().await;
             tracing::info!(target: "billing", "billing window reset on startup (no metering_path)");
