@@ -30,6 +30,17 @@ fn error_response(e: GatewayError) -> Response {
 /// Prometheus scrapers must supply a bearer token — see deploy/servicemonitor.yaml.
 const UNAUTHENTICATED_PATHS: &[&str] = &["/healthz", "/readyz", "/deep-health", "/health"];
 
+/// Whether the request path is exempt from the Bearer-token requirement.
+///
+/// Exact-match paths are listed above; we also unconditionally allow `/admin`
+/// and `/admin/*` because the admin UI is static HTML/CSS/JS served to a plain
+/// browser page-load (which has no Bearer header). Authorisation for the admin
+/// *REST* API (`/api/admin/*`) is done separately — `admin.js` injects the key
+/// from `localStorage` per-request, so those paths must NOT be matched here.
+fn is_unauthenticated(path: &str) -> bool {
+    UNAUTHENTICATED_PATHS.contains(&path) || path == "/admin" || path.starts_with("/admin/")
+}
+
 /// Authentication middleware — validates the Bearer token against the HMAC store.
 pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
@@ -42,7 +53,7 @@ pub async fn auth_middleware(
         .load(std::sync::atomic::Ordering::Relaxed);
 
     let path = request.uri().path();
-    if !enabled || UNAUTHENTICATED_PATHS.contains(&path) {
+    if !enabled || is_unauthenticated(path) {
         return next.run(request).await;
     }
 
