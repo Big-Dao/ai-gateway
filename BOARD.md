@@ -35,14 +35,15 @@
 
 | MVP | 描述 | 负责人 | Worktree 路径 | 状态 |
 |-----|------|--------|--------------|------|
-| MVP 0 | 基础 — CI、认证、限流、中间件 | 🟦 Dispatcher | ✅ done |
-| MVP 1 | 多租户 + RBAC + Admin API | 🟦 Dispatcher | ✅ done |
-| **MVP 2** | Metering — 用量计费计量 | 🟧 Meter | 🟢 开发中 |
-| **MVP 3** | Observability — 可观测性 | 🟪 Tracer | 🟡 _(待 Tracer 确认)_ |
-| **MVP 4** | Providers — 新提供商扩展 | 🟨 Bridge | 🟡 _(待 Bridge 确认)_ |
-| **MVP 2** | Metering — 用量计费计量 | 🟩 **Sentinel** | ✅ 完成，⏳ 等合并 |
-| **MVP 5** | OTel + 审计日志 | 🟩 **Sentinel** | 🟢 地基 done |
-| **MVP 6** | 成本计费 | ⬜ _(空闲)_ | 📋 可认领 |
+| MVP 0 | 基础 — CI、认证、限流、中间件 | 🟦 Dispatcher | — | ✅ done（安全清单 4/6 已修，见 CLAUDE.md） |
+| MVP 1 | 多租户 + RBAC + Admin API | 🟦 Dispatcher | — | ✅ done |
+| MVP 2 | Metering — 用量计费计量 | 🟧 Meter / 🟩 Sentinel | — | ✅ done（已合入 master） |
+| MVP 3 | Observability — 可观测性 | 🟪 Tracer | — | ✅ done（Prometheus + JSON 日志 + deep-health + log buffer） |
+| MVP 4 | Providers — 新提供商扩展 | 🟨 Bridge | — | 🟠 部分完成（OpenAICompat + 4 内置 done；优先级/权重/动态发现未做） |
+| MVP 5 | OTel + 审计日志 | 🟩 Sentinel | — | 🟠 部分完成（审计 done；OTel trace 未实现） |
+| MVP 6 | 成本计费 | ⬜ Ledger | — | ✅ done（PricingTable + costs API + billing reset + 阈值告警；`key_id` 接线遗漏见 CLAUDE.md） |
+
+> 2026-07-04 核实：MVP 0–6 代码均已在 master（commit `b2e982a`）。部分完成项与遗留 TODO 详见 `CLAUDE.md`「已知问题清单」。
 
 ---
 
@@ -59,31 +60,33 @@
 
 ## 📝 MVP 详细范围
 
-### MVP 2 — Metering (用量计费)
+> 2026-07-04 逐项核实代码后勾选。✅ 已实现 / ❌ 未实现。
 
-- [ ] 按租户记录 token 消耗量
-- [ ] 按请求计费（ configurable 费率表 ）
-- [ ] 用量查询 API (`/api/admin/usage/<tenant>`)
-- [ ] 配额超限自动拒绝
-- [ ] Admin UI: 用量仪表盘 + 费率配置页
+### MVP 2 — Metering (用量计费) ✅
 
-### MVP 3 — Observability (可观测性)
+- [x] 按租户记录 token 消耗量 — `metrics/metering.rs`（`TenantUsage` / `ModelUsage`）
+- [x] 按请求计费（configurable 费率表）— `gateway-core/src/metering.rs`（`PricingTable`）
+- [x] 用量查询 API — `/api/admin/usage/{tenant_id}`、`/api/admin/usage`
+- [x] 配额超限自动拒绝 — `middleware/quota_middleware.rs`
+- [x] Admin UI: 用量仪表盘 — `static/index.html`
 
-- [ ] Prometheus 指标导出 (`/metrics`)
-- [ ] 请求延迟分桶 histogram
-- [ ] 上游提供商错误率统计
-- [ ] 健康检查增强 (deep-health 上报各上游状态)
-- [ ] 结构化 JSON 日志输出
-- [ ] 可选: OpenTelemetry trace 导出
+### MVP 3 — Observability (可观测性) ✅
 
-### MVP 4 — Providers (新提供商扩展)
+- [x] Prometheus 指标导出 (`/metrics`) — `metrics/prometheus.rs`
+- [x] 请求延迟分桶 histogram — `gateway_request_duration_seconds`（自定义 bucket）
+- [x] 上游提供商错误率统计 — `record_request(provider, …, error)` 维度
+- [x] 健康检查增强 — `/deep-health` 上报各 provider 熔断状态
+- [x] 结构化 JSON 日志输出 — `json_logger.rs` + 内存环形缓冲 `log_buffer.rs`
+- [ ] 可选: OpenTelemetry trace 导出 — 未实现（归属 MVP 5）
 
-- [ ] Mistral 适配器
-- [ ] Groq / Together / Fireworks 等 OpenAI 兼容提供商（验证格式兼容）
-- [ ] 提供商自动发现 / 模型列表动态获取
-- [ ] 提供商优先级 / 权重路由
-- [ ] 提供商级别熔断器配置
-- [ ] Admin UI: 提供商发现 + 模型同步按钮
+### MVP 4 — Providers (新提供商扩展) 🟠 部分完成
+
+- [x] Mistral 适配器 — 经 `OpenAICompatProvider` 支持
+- [x] Groq / Together / Fireworks 等 OpenAI 兼容提供商 — `OpenAICompatProvider` + `field_overrides`
+- [ ] 提供商自动发现 / 模型列表动态获取 — 未实现
+- [ ] 提供商优先级 / 权重路由 — 未实现（`build_fallback_chain` 仅"内置优先"排序）
+- [ ] 提供商级别熔断器配置 — 熔断已按 provider 隔离，但参数为全局默认，不可按 provider 定制
+- [ ] Admin UI: 提供商发现 + 模型同步按钮 — 未实现
 
 ---
 
@@ -97,7 +100,10 @@
 
 ## 🔄 合并流程
 
-1. 各自 worktree 开发完成 → push 到远程分支 `mvp2-metering` / `mvp3-observability` / `mvp4-providers`
+> MVP 0–6 的并行开发阶段已结束，全部合入 `master`（commit `b2e982a`）。
+> 下方是当时的流程，也适用于未来任何 MVP：把 `mvp2-metering` 等换成新分支名即可。
+
+1. 各自 worktree 开发完成 → push 到远程特性分支（如 `mvpN-<topic>`）
 2. 在 BOARD.md 更新状态为"待合并"
 3. 由主 panel (Agent-1) 发起 PR → code review → 合入 master
 4. 合入后更新 BOARD.md 状态为"已合并"
@@ -116,4 +122,4 @@
 
 ---
 
-*最后更新: 2026-07-03 by Agent-2 (longcat panel)*
+*最后更新: 2026-07-04 — 文档刷新：MVP 状态对齐 master（commit `b2e982a`），逐项核实代码。遗留 TODO 见 `CLAUDE.md`「已知问题清单」。*

@@ -1,15 +1,25 @@
 # AI Gateway Configuration
 # Copy this file to config.toml and fill in your API keys.
+# Any value here can be overridden by an env var of the form
+#   AI_GATEWAY__SECTION__KEY=value   (double-underscore separators)
 
 [server]
 host = "0.0.0.0"
 port = 8080
+
+# ─── Top-level options ──────────────────────────────────────────────
+# Append every admin write (provider/key/config/quota change) as a JSON
+# line to this path. Parent directories are created on startup.
+# Uncomment to enable JSONL audit logging.
+# audit_path = "/var/log/ai-gateway/audit.jsonl"
 
 # ─── Provider: OpenAI ───────────────────────────────────────────────
 [providers.openai]
 api_key = "sk-your-openai-key"
 base_url = "https://api.openai.com/v1"
 models = ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]
+# Extra headers merged into every upstream request.
+# extra_headers = { "X-Org" = "my-org" }
 
 # ─── Provider: Anthropic ────────────────────────────────────────────
 [providers.anthropic]
@@ -29,7 +39,23 @@ models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 base_url = "http://localhost:11434"
 models = ["llama3.3", "mistral", "codellama"]
 
-# ─── Rate Limiting ──────────────────────────────────────────────────
+# ─── Provider: any OpenAI-compatible endpoint (Mistral / Groq / ─────
+#     Together / Fireworks / DeepSeek / vLLM, etc.)
+# Any provider whose name is NOT one of the four built-ins above
+# (openai/anthropic/gemini/ollama) — or that sets `field_overrides` — is
+# automatically routed through the OpenAI-compatible adapter. No extra
+# discriminator key is needed; just pick a name and point base_url at it.
+# [providers.deepseek]
+# api_key = "sk-your-deepseek-key"
+# base_url = "https://api.deepseek.com/v1"
+# models = ["deepseek-chat", "deepseek-reasoner"]
+# [providers.deepseek.field_overrides]
+# emit_reasoning_content = true
+# # Stream field renames: OpenAI field → upstream field.
+# [providers.deepseek.field_overrides.stream_field_renames]
+# reasoning_content = "reasoning"
+
+# ─── Rate Limiting (global default) ─────────────────────────────────
 [rate_limit]
 requests_per_minute = 60
 
@@ -39,8 +65,41 @@ enabled = true
 max_capacity = 1000
 ttl_seconds = 300
 
-# ─── Pricing (per-model metering) ───────────────────────────────────
-# When a model has no entry and no default is set, calls are free.
+# ─── Authentication ─────────────────────────────────────────────────
+[auth]
+enabled = true
+# IMPORTANT: replace "REPLACE_ME" with a high-entropy secret before exposing
+# this gateway. The server refuses to start with auth enabled and no keys.
+# Plaintext keys are auto-hashed (HMAC-SHA256 + per-key salt) on boot.
+# Prefer injecting keys via the AI_GATEWAY__AUTH__API_KEYS__ env var over
+# keeping secrets in this file.
+api_keys = ["REPLACE_ME"]
+# Structured keys bind a plaintext key to (tenant_id, role).
+# Roles: "admin" | "tenant_admin" | "developer".
+# structured_keys = [
+#   ["sk-admin-key", "default", "admin"],
+#   ["sk-acme-dev",  "acme",     "developer"],
+# ]
+# required_hmac_secret = "shared-hmac-secret"   # optional tenant-wide signing
+default_tenant = "default"
+default_role = "developer"
+
+# ─── Tenants (multi-tenancy, quotas, model/provider allow-lists) ────
+# A "default" tenant always exists. Add more below. Omitted fields use
+# the defaults shown.
+# [tenants.acme]
+# allowed_providers = ["openai", "anthropic"]
+# allowed_models = ["gpt-4o-mini", "claude-sonnet-4-6"]
+# cost_alert_threshold_cents = 5000.0   # one-shot warn! at $50.00 / window
+# [tenants.acme.quotas]
+# max_rpm = 120          # requests per minute   (default 60)
+# max_rpd = 20000        # requests per day      (default 10000)
+# max_tpm = 1000000      # tokens per minute     (default 500000)
+# max_tpd = 10000000     # tokens per day        (default 5000000)
+
+# ─── Pricing (per-model cost, MVP 6) ────────────────────────────────
+# Values are currency units (e.g. US cents) per 1M tokens. When a model
+# has no entry and no default is set, calls are free.
 [pricing]
 default = { input_per_1m = 5.0, output_per_1m = 15.0 }
 
@@ -52,11 +111,9 @@ output_per_1m = 10.0
 input_per_1m = 3.0
 output_per_1m = 15.0
 
-# ─── Authentication ─────────────────────────────────────────────────
-# IMPORTANT: replace "REPLACE_ME" with a high-entropy secret before exposing
-# this gateway. The server refuses to start with auth enabled and no keys.
-# Prefer injecting keys via AI_GATEWAY__AUTH__API_KEYS__ env var instead of
-# keeping secrets in this file.
-[auth]
-enabled = true
-api_keys = ["REPLACE_ME"]
+# ─── Legacy platform-wide rate card (optional) ──────────────────────
+# Superseded by [pricing] above; retained for backward compatibility.
+# Cost per 1M tokens in the smallest currency unit (e.g. cents).
+# [rate_config]
+# prompt_per_million = 100
+# completion_per_million = 300
