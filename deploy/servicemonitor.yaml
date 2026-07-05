@@ -11,3 +11,13 @@ spec:
     - port: http
       path: /metrics
       interval: 15s
+      # /metrics requires authentication (S2). Supply a bearer token from the
+      # ai-gateway-metrics-token Secret (key: token), holding a valid gateway
+      # API key with at least developer role. Create it e.g.:
+      #   kubectl create secret generic ai-gateway-metrics-token \
+      #     --from-literal=token=<valid-gateway-api-key>
+      authorization:
+        type: Bearer
+        credentials:
+          name: ai-gateway-metrics-token
+          key: token

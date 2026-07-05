@@ -23,11 +23,13 @@ fn error_response(e: GatewayError) -> Response {
     (status, axum::Json(e.to_error_response())).into_response()
 }
 
-/// Paths excluded from auth — K8s load balancers, health monitors, and our
-/// own smoke tests. The Admin UI (page + static assets) now REQUIRES a valid
-/// Bearer token; see S2 security fix.
-const UNAUTHENTICATED_PATHS: &[&str] =
-    &["/healthz", "/readyz", "/deep-health", "/health", "/metrics"];
+/// Paths excluded from auth — K8s liveness/readiness probes only.
+///
+/// NOTE (S2): `/metrics` was previously on this list, which leaked
+/// per-tenant usage volumes, token consumption and error rates to any
+/// unauthenticated caller. It now requires a valid API key (any role).
+/// Prometheus scrapers must supply a bearer token — see deploy/servicemonitor.yaml.
+const UNAUTHENTICATED_PATHS: &[&str] = &["/healthz", "/readyz", "/deep-health", "/health"];
 
 /// Authentication middleware — validates the Bearer token against the HMAC store.
 pub async fn auth_middleware(
@@ -49,8 +51,16 @@ pub async fn auth_middleware(
         Some(value) => match value.to_str() {
             Ok(v) if v.starts_with("Bearer ") => {
                 let key = &v[7..];
-                let store = state.auth_store.read().await;
-                if let Some(entry) = store.verify(key) {
+                // Verify the key and clone the matching entry, then DROP the
+                // read lock before dispatching to the handler. Holding the
+                // auth_store read lock across `next.run(...)` deadlocks any
+                // handler that takes the auth_store write lock (create_key,
+                // delete_key) — a latent bug surfaced by end-to-end testing.
+                let entry = {
+                    let store = state.auth_store.read().await;
+                    store.verify(key).cloned()
+                };
+                if let Some(entry) = entry {
                     // Inject the key_id fingerprint for downstream handlers.
                     request
                         .extensions_mut()

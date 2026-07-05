@@ -68,8 +68,12 @@ ttl_seconds = 300
 # ─── Authentication ─────────────────────────────────────────────────
 [auth]
 enabled = true
-# Plaintext keys auto-hashed (HMAC-SHA256 + per-key salt) on boot.
-api_keys = ["my-secret-key", "another-key"]
+# IMPORTANT: replace "REPLACE_ME" with a high-entropy secret before exposing
+# this gateway. The server refuses to start with auth enabled and no keys.
+# Plaintext keys are auto-hashed (HMAC-SHA256 + per-key salt) on boot.
+# Prefer injecting keys via the AI_GATEWAY__AUTH__API_KEYS__ env var over
+# keeping secrets in this file.
+api_keys = ["REPLACE_ME"]
 # Structured keys bind a plaintext key to (tenant_id, role).
 # Roles: "admin" | "tenant_admin" | "developer".
 # structured_keys = [

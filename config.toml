@@ -40,6 +40,10 @@ max_capacity = 1000
 ttl_seconds = 300
 
 # ─── Authentication ─────────────────────────────────────────────────
+# IMPORTANT: replace "REPLACE_ME" with a high-entropy secret before exposing
+# this gateway. The server refuses to start with auth enabled and no keys.
+# Prefer injecting keys via AI_GATEWAY__AUTH__API_KEYS__ env var instead of
+# keeping secrets in this file.
 [auth]
 enabled = true
-api_keys = ["my-secret-key", "another-key"]
+api_keys = ["REPLACE_ME"]

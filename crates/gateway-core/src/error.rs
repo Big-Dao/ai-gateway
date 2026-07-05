@@ -21,8 +21,15 @@ pub enum GatewayError {
         current: u64,
     },
 
-    #[error("Upstream provider error: {0}")]
-    UpstreamError(String),
+    #[error("Upstream provider error: {message}")]
+    UpstreamError {
+        message: String,
+        /// HTTP status code from the upstream response, if any. `None` for
+        /// transport / timeout / parse errors (no HTTP response received).
+        /// Used by retry logic to decide retryability without fragile string
+        /// matching on the message.
+        status: Option<u16>,
+    },
 
     #[error("Invalid request: {0}")]
     BadRequest(String),
@@ -38,6 +45,22 @@ pub enum GatewayError {
 }
 
 impl GatewayError {
+    /// Upstream error with no HTTP status (transport / timeout / parse).
+    pub fn upstream(message: impl Into<String>) -> Self {
+        GatewayError::UpstreamError {
+            message: message.into(),
+            status: None,
+        }
+    }
+
+    /// Upstream error carrying the provider's HTTP status code.
+    pub fn upstream_status(status: u16, message: impl Into<String>) -> Self {
+        GatewayError::UpstreamError {
+            message: message.into(),
+            status: Some(status),
+        }
+    }
+
     /// Returns the appropriate HTTP status code for this error.
     pub fn status_code(&self) -> u16 {
         use http::StatusCode;
@@ -47,7 +70,7 @@ impl GatewayError {
             GatewayError::Forbidden(_) => StatusCode::FORBIDDEN.as_u16(),
             GatewayError::RateLimited => StatusCode::TOO_MANY_REQUESTS.as_u16(),
             GatewayError::QuotaExceeded { .. } => StatusCode::TOO_MANY_REQUESTS.as_u16(),
-            GatewayError::UpstreamError(_) => StatusCode::BAD_GATEWAY.as_u16(),
+            GatewayError::UpstreamError { .. } => StatusCode::BAD_GATEWAY.as_u16(),
             GatewayError::BadRequest(_) => StatusCode::BAD_REQUEST.as_u16(),
             GatewayError::CacheError(_) => StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
             GatewayError::ConfigError(_) => StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
@@ -63,7 +86,7 @@ impl GatewayError {
             GatewayError::Forbidden(_) => "insufficient_permissions",
             GatewayError::RateLimited => "rate_limit_exceeded",
             GatewayError::QuotaExceeded { .. } => "quota_exceeded",
-            GatewayError::UpstreamError(_) => "upstream_error",
+            GatewayError::UpstreamError { .. } => "upstream_error",
             GatewayError::BadRequest(_) => "invalid_request_error",
             GatewayError::CacheError(_) => "cache_error",
             GatewayError::ConfigError(_) => "config_error",

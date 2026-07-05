@@ -6,6 +6,8 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+use crate::persistence::FileMeteringStore;
+
 /// Maximum number of detail events retained in memory. When this cap is hit,
 /// older events are dropped so the buffer can't grow without bound (M5 —
 /// prevents OOM under long-running / high-QPS workloads).
@@ -74,6 +76,10 @@ pub struct MeteringService {
     /// don't OOM. Reads/writes are short critical sections.
     events: Arc<Mutex<VecDeque<MeteringEvent>>>,
     usage: Arc<Mutex<HashMap<String, TenantUsage>>>,
+    /// Optional durable JSONL store. When set, each recorded event is appended
+    /// (fire-and-forget) and replayed on startup so usage/cost survive
+    /// restarts (P0 stage 4). `None` in tests / when `metering_path` is unset.
+    store: Option<Arc<FileMeteringStore>>,
 }
 
 impl MeteringService {
@@ -81,6 +87,49 @@ impl MeteringService {
         Self {
             events: Arc::new(Mutex::new(VecDeque::with_capacity(1024))),
             usage: Arc::new(Mutex::new(HashMap::new())),
+            store: None,
+        }
+    }
+
+    /// Attach a durable store. Subsequent `record` calls append to it, and
+    /// `reset_billing_window` truncates it.
+    pub fn set_store(&mut self, store: Arc<FileMeteringStore>) {
+        self.store = Some(store);
+    }
+
+    /// Replay persisted events into the in-memory aggregates. Used on startup
+    /// to restore usage/cost after a restart. Does not re-trigger cost alerts
+    /// (those are runtime latches evaluated on new events).
+    pub async fn load_events(&self, events: Vec<MeteringEvent>) {
+        let mut usage = self.usage.lock().await;
+        for event in events {
+            let entry = usage
+                .entry(event.tenant_id.clone())
+                .or_insert_with(|| TenantUsage {
+                    tenant_id: event.tenant_id.clone(),
+                    ..Default::default()
+                });
+            entry.total_requests += 1;
+            entry.total_prompt_tokens += event.prompt_tokens;
+            entry.total_completion_tokens += event.completion_tokens;
+            entry.total_tokens += event.total_tokens();
+            entry.total_errors += if event.status == RequestStatus::Error {
+                1
+            } else {
+                0
+            };
+            entry.total_cost_cents += event.estimated_cost_cents;
+            let me = entry
+                .per_model
+                .entry(event.model.clone())
+                .or_insert_with(|| ModelUsage {
+                    model: event.model.clone(),
+                    ..Default::default()
+                });
+            me.requests += 1;
+            me.prompt_tokens += event.prompt_tokens;
+            me.completion_tokens += event.completion_tokens;
+            me.cost_cents += event.estimated_cost_cents;
         }
     }
 
@@ -165,7 +214,17 @@ impl MeteringService {
         if events.len() >= MAX_EVENTS {
             events.pop_front();
         }
-        events.push_back(event);
+        events.push_back(event.clone());
+        drop(events);
+
+        // Persist to the durable store (best-effort, off the request path).
+        if let Some(store) = self.store.clone() {
+            tokio::spawn(async move {
+                if let Err(e) = store.append(&event).await {
+                    warn!(error = %e, "failed to persist metering event");
+                }
+            });
+        }
     }
 
     /// Lightweight request counter — preferred over `record(..)` on the hot
@@ -333,6 +392,15 @@ impl MeteringService {
             u.alert_triggered = false;
             for m in u.per_model.values_mut() {
                 m.cost_cents = 0.0;
+            }
+        }
+        drop(usage);
+
+        // Truncate the durable store too, so a reset billing window stays
+        // reset across restarts (P0 stage 4).
+        if let Some(store) = &self.store {
+            if let Err(e) = store.reset().await {
+                warn!(error = %e, "failed to reset metering store");
             }
         }
     }

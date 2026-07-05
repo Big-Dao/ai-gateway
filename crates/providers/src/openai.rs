@@ -27,7 +27,10 @@ impl OpenAIProvider {
     ) -> Self {
         Self {
             name: "openai".into(),
-            client: Client::new(),
+            client: Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("build reqwest client"),
             api_key,
             base_url: base_url.unwrap_or_else(|| "https://api.openai.com/v1".into()),
             extra_headers,
@@ -77,21 +80,21 @@ impl LLMProvider for OpenAIProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| GatewayError::UpstreamError(e.to_string()))?;
+            .map_err(|e| GatewayError::upstream(e.to_string()))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             error!(%status, %body, "OpenAI upstream error");
-            return Err(GatewayError::UpstreamError(format!(
-                "OpenAI {}: {}",
-                status, body
-            )));
+            return Err(GatewayError::upstream_status(
+                status.as_u16(),
+                format!("OpenAI {}: {}", status, body),
+            ));
         }
 
         resp.json::<ChatCompletionResponse>()
             .await
-            .map_err(|e| GatewayError::UpstreamError(e.to_string()))
+            .map_err(|e| GatewayError::upstream(e.to_string()))
     }
 
     async fn chat_completion_stream(
@@ -109,15 +112,15 @@ impl LLMProvider for OpenAIProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| GatewayError::UpstreamError(e.to_string()))?;
+            .map_err(|e| GatewayError::upstream(e.to_string()))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::UpstreamError(format!(
-                "OpenAI {}: {}",
-                status, body
-            )));
+            return Err(GatewayError::upstream_status(
+                status.as_u16(),
+                format!("OpenAI {}: {}", status, body),
+            ));
         }
 
         let stream = resp.bytes_stream();
@@ -135,7 +138,7 @@ impl LLMProvider for OpenAIProvider {
                             match serde_json::from_str::<ChatCompletionChunk>(data) {
                                 Ok(chunk) => return Some(Ok(chunk)),
                                 Err(e) => {
-                                    return Some(Err(GatewayError::UpstreamError(format!(
+                                    return Some(Err(GatewayError::upstream(format!(
                                         "SSE parse error: {}",
                                         e
                                     ))));
@@ -145,7 +148,7 @@ impl LLMProvider for OpenAIProvider {
                     }
                     None
                 }
-                Err(e) => Some(Err(GatewayError::UpstreamError(e.to_string()))),
+                Err(e) => Some(Err(GatewayError::upstream(e.to_string()))),
             }
         });
 

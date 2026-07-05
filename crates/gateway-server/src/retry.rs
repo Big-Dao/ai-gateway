@@ -1,6 +1,7 @@
+use rand::Rng;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 use tracing::{info, instrument, warn};
 
 use gateway_core::error::GatewayError;
@@ -101,14 +102,31 @@ pub async fn chat_completion_with_retry(
                     backoff_ms = backoff.as_millis(),
                     "Retrying request after backoff"
                 );
-                sleep(backoff).await;
+                // Full jitter: wait a random fraction of the computed backoff
+                // so concurrent retries across instances don't synchronize
+                // (thundering-herd effect).
+                let base_ms = backoff.as_millis() as u64;
+                let jittered_ms = rand::thread_rng().gen_range(0..=base_ms);
+                sleep(Duration::from_millis(jittered_ms)).await;
                 backoff = std::cmp::min(
                     Duration::from_secs_f64(backoff.as_secs_f64() * config.backoff_multiplier),
                     config.max_backoff,
                 );
             }
 
-            match provider.chat_completion(request.clone()).await {
+            // Bound the upstream call so a hung provider cannot hold a worker
+            // forever. A timeout becomes an UpstreamError (retryable).
+            let result = timeout(
+                Duration::from_secs(120),
+                provider.chat_completion(request.clone()),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(GatewayError::upstream(
+                    "upstream request timed out after 120s",
+                ))
+            });
+            match result {
                 Ok(response) => {
                     circuit_breaker.record_success(provider_name).await;
                     if is_fallback {
@@ -186,7 +204,20 @@ pub async fn chat_completion_stream_with_retry(
         // For streaming, we don't do multi-attempt retry within a provider
         // because the stream has already started. Instead, we try once
         // and fall back to the next provider on failure.
-        match provider.chat_completion_stream(request.clone()).await {
+        // Bound the stream *handshake* (connect + first response headers) so a
+        // provider that never answers cannot stall the request. Once the stream
+        // is established it is left unbounded — LLM streams are long-lived.
+        let result = timeout(
+            Duration::from_secs(30),
+            provider.chat_completion_stream(request.clone()),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(GatewayError::upstream(
+                "upstream stream handshake timed out after 30s",
+            ))
+        });
+        match result {
             Ok(stream) => {
                 circuit_breaker.record_success(provider_name).await;
                 return Ok((stream, attempt_info));
@@ -234,31 +265,26 @@ async fn build_fallback_chain(state: &AppState, model: &str) -> Vec<String> {
     providers
 }
 
-/// Determine if an error is retryable.
+/// Determine if an error is retryable, based on the upstream HTTP status
+/// (when known) rather than fragile string matching on the message body.
 fn is_retryable(error: &GatewayError) -> bool {
     match error {
-        // Timeouts and upstream errors are retryable.
-        GatewayError::UpstreamError(msg) => {
-            // Don't retry client errors (4xx except 429).
-            if msg.contains("400")
-                || msg.contains("401")
-                || msg.contains("403")
-                || msg.contains("404")
-            {
-                false
-            } else {
-                true
-            }
-        }
-        // Rate limited — retryable with backoff.
+        GatewayError::UpstreamError { status, .. } => match *status {
+            // Server errors, 408 (request timeout) and 429 (rate limit) are
+            // transient — retry.
+            Some(408 | 429 | 500..=599) => true,
+            // Other 4xx are client errors (bad request, auth, not found, ...) —
+            // retrying won't help.
+            Some(_) => false,
+            // No HTTP status: transport / timeout / parse error — retry.
+            None => true,
+        },
         GatewayError::RateLimited => true,
-        // Provider not found — not retryable.
         GatewayError::ProviderNotFound(_) => false,
-        // Auth errors — not retryable.
         GatewayError::AuthenticationFailed(_) => false,
-        // Bad request — not retryable.
+        GatewayError::Forbidden(_) => false,
         GatewayError::BadRequest(_) => false,
-        // Everything else — retryable.
+        GatewayError::QuotaExceeded { .. } => false,
         _ => true,
     }
 }

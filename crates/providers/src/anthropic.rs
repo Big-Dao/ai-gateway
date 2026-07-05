@@ -113,6 +113,7 @@ impl AnthropicProvider {
         Self {
             name: "anthropic".into(),
             client: Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
                 .default_headers({
                     let mut h = reqwest::header::HeaderMap::new();
                     h.insert(
@@ -250,22 +251,22 @@ impl LLMProvider for AnthropicProvider {
             .json(&anthro_req)
             .send()
             .await
-            .map_err(|e| GatewayError::UpstreamError(e.to_string()))?;
+            .map_err(|e| GatewayError::upstream(e.to_string()))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             error!(%status, %body, "Anthropic upstream error");
-            return Err(GatewayError::UpstreamError(format!(
-                "Anthropic {}: {}",
-                status, body
-            )));
+            return Err(GatewayError::upstream_status(
+                status.as_u16(),
+                format!("Anthropic {}: {}", status, body),
+            ));
         }
 
         let anthro_resp = resp
             .json::<AnthropicResponse>()
             .await
-            .map_err(|e| GatewayError::UpstreamError(e.to_string()))?;
+            .map_err(|e| GatewayError::upstream(e.to_string()))?;
 
         Ok(self.convert_response(anthro_resp))
     }
@@ -290,15 +291,15 @@ impl LLMProvider for AnthropicProvider {
             .json(&anthro_req)
             .send()
             .await
-            .map_err(|e| GatewayError::UpstreamError(e.to_string()))?;
+            .map_err(|e| GatewayError::upstream(e.to_string()))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::UpstreamError(format!(
-                "Anthropic {}: {}",
-                status, body
-            )));
+            return Err(GatewayError::upstream_status(
+                status.as_u16(),
+                format!("Anthropic {}: {}", status, body),
+            ));
         }
 
         let stream = resp.bytes_stream();
@@ -369,7 +370,7 @@ impl LLMProvider for AnthropicProvider {
                             Some(results.into_iter().next().unwrap())
                         }
                     }
-                    Err(e) => Some(Err(GatewayError::UpstreamError(e.to_string()))),
+                    Err(e) => Some(Err(GatewayError::upstream(e.to_string()))),
                 }
             }
         });

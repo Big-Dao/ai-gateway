@@ -27,6 +27,12 @@ pub struct AppConfig {
     /// Parent directories are created on startup.
     #[serde(default)]
     pub audit_path: Option<String>,
+    /// When set, metering events are appended as JSON lines to this path and
+    /// replayed on startup so usage/cost aggregates survive restarts (P0
+    /// stage 4 — replaces the startup billing-window reset that zeroed cost
+    /// on every boot). Parent directories are created on startup.
+    #[serde(default)]
+    pub metering_path: Option<String>,
 }
 
 /// Per-provider behavioral tweaks for OpenAI-compatible providers.
@@ -173,7 +179,11 @@ impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            api_keys: vec!["test-key".into()],
+            // S2: do NOT ship a default key. The previous `vec!["test-key"]`
+            // meant a gateway started without an explicit `[auth]` block was
+            // reachable with a publicly known credential. The startup check in
+            // main.rs refuses to boot when auth is enabled and this is empty.
+            api_keys: vec![],
             structured_keys: vec![],
             required_hmac_secret: None,
             default_tenant: default_tenant(),

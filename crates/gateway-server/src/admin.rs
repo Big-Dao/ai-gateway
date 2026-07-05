@@ -153,7 +153,16 @@ pub fn admin_router() -> Router<Arc<AppState>> {
 
 // ─── Handlers ───────────────────────────────────────────────────────
 
-async fn get_metrics(State(state): State<Arc<AppState>>) -> Json<AdminMetricsResponse> {
+async fn get_metrics(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_key): Extension<AuthKey>,
+) -> Result<Json<AdminMetricsResponse>, ApiError> {
+    // RBAC: aggregate gateway metrics expose cross-tenant volume and config
+    // shape — require at least tenant_admin (S2).
+    require_role(&state, &auth_key, Role::TENANT_ADMIN)
+        .await
+        .map_err(ApiError)?;
+
     let m = state.metrics.lock().await;
     let config = state.config.read().await;
     let cache_size = if config.cache.enabled {
@@ -167,7 +176,7 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Json<AdminMetricsRes
         providers.len()
     };
 
-    Json(AdminMetricsResponse {
+    Ok(Json(AdminMetricsResponse {
         total_requests: m.total_requests,
         total_prompt_tokens: m.total_prompt_tokens,
         total_completion_tokens: m.total_completion_tokens,
@@ -180,10 +189,19 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Json<AdminMetricsRes
         rate_limit_rpm: config.rate_limit.requests_per_minute,
         auth_enabled: config.auth.enabled,
         api_keys_count: config.auth.api_keys.len(),
-    })
+    }))
 }
 
-async fn list_providers(State(state): State<Arc<AppState>>) -> Json<Vec<ProviderInfo>> {
+async fn list_providers(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_key): Extension<AuthKey>,
+) -> Result<Json<Vec<ProviderInfo>>, ApiError> {
+    // RBAC: provider list exposes upstream base URLs and key presence —
+    // tenant_admin minimum (S2).
+    require_role(&state, &auth_key, Role::TENANT_ADMIN)
+        .await
+        .map_err(ApiError)?;
+
     let config = state.config.read().await;
     let providers: Vec<ProviderInfo> = config
         .providers
@@ -196,13 +214,19 @@ async fn list_providers(State(state): State<Arc<AppState>>) -> Json<Vec<Provider
         })
         .collect();
 
-    Json(providers)
+    Ok(Json(providers))
 }
 
 async fn get_provider(
     State(state): State<Arc<AppState>>,
+    Extension(auth_key): Extension<AuthKey>,
     Path(name): Path<String>,
 ) -> Result<Json<ProviderInfo>, ApiError> {
+    // RBAC: provider detail exposes upstream base URL — tenant_admin (S2).
+    require_role(&state, &auth_key, Role::TENANT_ADMIN)
+        .await
+        .map_err(ApiError)?;
+
     let config = state.config.read().await;
     let cfg = config.providers.get(&name).ok_or_else(|| {
         ApiError(gateway_core::error::GatewayError::ProviderNotFound(
@@ -412,15 +436,41 @@ async fn create_key(
         )));
     }
 
-    // Determine target tenant + role from request (tenant_admin stays in own tenant)
-    let target_tenant = req.tenant_id.unwrap_or(tenant_id);
-    let target_role = req.role.clone().unwrap_or_else(|| "developer".to_string());
+    // Resolve the caller's full role (require_role above only checked the floor).
+    let caller_role = {
+        let store = state.auth_store.read().await;
+        store
+            .verify_by_id(&auth_key.0)
+            .map(|e| Role::from_str(&e.role))
+            .unwrap_or(Role::DEVELOPER)
+    };
 
-    // Only global admin can create keys for other tenants
-    if target_tenant != require_role(&state, &auth_key, Role::DEVELOPER).await? {
+    // Target tenant: tenant_admins may only create keys in their own tenant;
+    // only global admin may target a different tenant.
+    let target_tenant = req.tenant_id.unwrap_or_else(|| tenant_id.clone());
+    if target_tenant != tenant_id {
         require_role(&state, &auth_key, Role::ADMIN)
             .await
             .map_err(ApiError)?;
+    }
+
+    // Target role: must be a known role name (reject unknown strings instead
+    // of silently downgrading to developer), and non-admin callers may NOT
+    // escalate privileges by minting tenant_admin/admin keys.
+    // (S2 fix: vertical privilege escalation via create_key.)
+    let target_role = req.role.clone().unwrap_or_else(|| "developer".to_string());
+    match target_role.as_str() {
+        "developer" | "tenant_admin" | "admin" => {}
+        _ => {
+            return Err(ApiError(gateway_core::error::GatewayError::BadRequest(
+                format!("unknown role '{target_role}'"),
+            )))
+        }
+    }
+    if caller_role < Role::ADMIN && Role::from_str(&target_role) >= Role::TENANT_ADMIN {
+        return Err(ApiError(gateway_core::error::GatewayError::Forbidden(
+            "insufficient privileges to create an elevated-role key".into(),
+        )));
     }
 
     // Add as structured entry
@@ -448,21 +498,38 @@ async fn create_key(
         .structured_keys
         .push(gateway_core::config::StructuredKey(
             req.key,
-            target_tenant,
+            target_tenant.clone(),
             target_role,
         ));
 
-    // Also add to the in-memory store so it works immediately
-    {
-        use gateway_core::auth_key::ApiKeyEntry;
-        use gateway_core::error::GatewayError;
+    // Also add to the in-memory store so it works immediately.
+    let new_key_id = {
         let entry = ApiKeyEntry::new(&plaintext_key, &tenant_for_store, &role_for_store);
+        let kid = entry.key_id.clone();
         state.auth_store.write().await.add(entry);
-    }
+        kid
+    };
+
+    // Audit: KeyCreate. Logs only the derived key_id — never the plaintext.
+    state
+        .emit_audit(
+            AuditAction::KeyCreate,
+            gateway_core::audit::AuditActor {
+                id: auth_key.0.clone(),
+                role: caller_role,
+                ip: None,
+                context: None,
+            },
+            target_tenant.clone(),
+            Some(new_key_id.as_str()),
+            true,
+            None,
+        )
+        .await;
 
     Ok((
         StatusCode::CREATED,
-        Json(serde_json::json!({"status": "created"})),
+        Json(serde_json::json!({"status": "created", "key_id": new_key_id})),
     )
         .into_response())
 }
@@ -470,42 +537,83 @@ async fn create_key(
 async fn delete_key(
     State(state): State<Arc<AppState>>,
     Extension(auth_key): Extension<AuthKey>,
-    Path(key_id): Path<String>,
+    Path(plaintext_key): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // RBAC: requires tenant_admin; scoped to own tenant
+    // RBAC: requires tenant_admin; scoped to own tenant.
     let caller_tenant = require_role(&state, &auth_key, Role::TENANT_ADMIN)
         .await
         .map_err(ApiError)?;
 
-    // Check tenant scope on the entry being deleted
+    // Resolve caller role for the audit record.
+    let caller_role = {
+        let store = state.auth_store.read().await;
+        store
+            .verify_by_id(&auth_key.0)
+            .map(|e| Role::from_str(&e.role))
+            .unwrap_or(Role::DEVELOPER)
+    };
+
+    // Locate the entry by verifying the plaintext key. We take the plaintext
+    // (not the key_id fingerprint) so we can also remove the matching record
+    // from the config store, which holds plaintext — the only stable bridge
+    // between the in-memory HMAC store and the config source. (S2 fix: the
+    // previous impl compared the fingerprint against plaintext and never
+    // matched, so revocation was a silent no-op until process restart.)
+    let entry = {
+        let store = state.auth_store.read().await;
+        store.verify(&plaintext_key).cloned().ok_or_else(|| {
+            ApiError(gateway_core::error::GatewayError::BadRequest(
+                "API key not found".into(),
+            ))
+        })?
+    };
+
+    // Tenant scope: deleting a key in another tenant requires global admin.
+    if entry.tenant_id != caller_tenant {
+        require_role(&state, &auth_key, Role::ADMIN)
+            .await
+            .map_err(ApiError)?;
+    }
+
+    // Remove from the in-memory store (immediate revocation) ...
+    state
+        .auth_store
+        .write()
+        .await
+        .remove_by_id(&entry.key_id);
+
+    // ... and from the config source (prevents resurrection on restart).
     {
-        let config = state.config.read().await;
-        if let Some(entry) = config.auth.structured_keys.iter().find(|k| k.0 == key_id) {
-            if entry.1 != caller_tenant {
-                require_role(&state, &auth_key, Role::ADMIN)
-                    .await
-                    .map_err(ApiError)?;
-            }
-        }
+        let mut config = state.config.write().await;
+        config
+            .auth
+            .structured_keys
+            .retain(|k| k.0 != plaintext_key);
+        config.auth.api_keys.retain(|k| k != &plaintext_key);
     }
 
-    let mut config = state.config.write().await;
-    let before = config.auth.structured_keys.len() + config.auth.api_keys.len();
-    config.auth.structured_keys.retain(|k| k.0 != key_id);
-    config.auth.api_keys.retain(|k| k != &key_id);
-    let after = config.auth.structured_keys.len() + config.auth.api_keys.len();
+    // Audit: KeyRevoke. Logs the key_id fingerprint only, never the plaintext.
+    state
+        .emit_audit(
+            AuditAction::KeyRevoke,
+            gateway_core::audit::AuditActor {
+                id: auth_key.0.clone(),
+                role: caller_role,
+                ip: None,
+                context: None,
+            },
+            caller_tenant,
+            Some(entry.key_id.as_str()),
+            true,
+            None,
+        )
+        .await;
 
-    if after == before {
-        return Err(ApiError(gateway_core::error::GatewayError::BadRequest(
-            "API key not found".into(),
-        )));
-    }
-
-    // Also remove from in-memory store
-    state.auth_store.write().await.remove_by_id(&key_id);
-
-    info!(key_id = %key_id, "Admin: removed API key");
-    Ok(Json(serde_json::json!({"status": "deleted"})))
+    info!(key_id = %entry.key_id, "Admin: removed API key");
+    Ok(Json(serde_json::json!({
+        "status": "deleted",
+        "key_id": entry.key_id,
+    })))
 }
 
 async fn update_quota(
@@ -684,8 +792,14 @@ async fn delete_tenant(
 
 async fn update_cache_config(
     State(state): State<Arc<AppState>>,
+    Extension(auth_key): Extension<AuthKey>,
     Json(req): Json<UpdateCacheConfigRequest>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // RBAC: mutating global cache config requires global admin (S2).
+    require_role(&state, &auth_key, Role::ADMIN)
+        .await
+        .map_err(ApiError)?;
+
     let mut config = state.config.write().await;
     if let Some(enabled) = req.enabled {
         config.cache.enabled = enabled;
@@ -698,20 +812,28 @@ async fn update_cache_config(
     }
 
     info!("Admin: updated cache config");
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "status": "updated",
         "cache": {
             "enabled": config.cache.enabled,
             "max_capacity": config.cache.max_capacity,
             "ttl_seconds": config.cache.ttl_seconds,
         }
-    }))
+    })))
 }
 
 async fn update_rate_limit(
     State(state): State<Arc<AppState>>,
+    Extension(auth_key): Extension<AuthKey>,
     Json(req): Json<UpdateRateLimitRequest>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // RBAC: mutating the global rate-limit requires global admin (S2).
+    // Without this any developer could push the token bucket to u32::MAX and
+    // effectively disable rate limiting.
+    require_role(&state, &auth_key, Role::ADMIN)
+        .await
+        .map_err(ApiError)?;
+
     let rpm = {
         let mut config = state.config.write().await;
         if let Some(rpm) = req.requests_per_minute {
@@ -725,17 +847,36 @@ async fn update_rate_limit(
     state.update_rate_limit_config(rpm);
 
     info!(rpm, "Admin: updated rate limit config");
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "status": "updated",
         "requests_per_minute": rpm,
-    }))
+    })))
 }
 
-async fn get_logs(State(_state): State<Arc<AppState>>) -> Json<Vec<crate::log_buffer::LogEntry>> {
-    Json(crate::log_buffer::LOG_BUFFER.entries())
+async fn get_logs(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_key): Extension<AuthKey>,
+) -> Result<Json<Vec<crate::log_buffer::LogEntry>>, ApiError> {
+    // RBAC: the log buffer contains cross-tenant request detail (model,
+    // tenant, provider) — admin only (S2).
+    require_role(&state, &auth_key, Role::ADMIN)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(crate::log_buffer::LOG_BUFFER.entries()))
 }
 
-async fn get_circuit_breaker_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+async fn get_circuit_breaker_status(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_key): Extension<AuthKey>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // RBAC: any authenticated caller may read breaker state (it carries no
+    // tenant secrets), but authentication is now required (S2 — previously
+    // this endpoint was reachable by an unauthenticated developer-class key
+    // path, and the role gate was missing entirely).
+    require_role(&state, &auth_key, Role::DEVELOPER)
+        .await
+        .map_err(ApiError)?;
+
     let states = state.circuit_breaker.all_states().await;
     let total_rejected = state.circuit_breaker.total_rejected();
 
@@ -751,10 +892,10 @@ async fn get_circuit_breaker_status(State(state): State<Arc<AppState>>) -> Json<
         })
         .collect();
 
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "states": states_map,
         "total_rejected": total_rejected,
-    }))
+    })))
 }
 
 // ─── Metering & Usage handlers (MVP 2) ───────────────────────────────
@@ -967,17 +1108,25 @@ async fn get_costs(
     Ok(Json(summary))
 }
 
-async fn get_rate_card(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+async fn get_rate_card(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_key): Extension<AuthKey>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // RBAC: pricing is commercially sensitive — tenant_admin minimum (S2).
+    require_role(&state, &auth_key, Role::TENANT_ADMIN)
+        .await
+        .map_err(ApiError)?;
+
     let config = state.config.read().await;
     match &config.rate_config {
-        Some(card) => Json(serde_json::json!({
+        Some(card) => Ok(Json(serde_json::json!({
             "prompt_per_million": card.prompt_per_million,
             "completion_per_million": card.completion_per_million,
-        })),
-        None => Json(serde_json::json!({
+        }))),
+        None => Ok(Json(serde_json::json!({
             "prompt_per_million": 0,
             "completion_per_million": 0,
             "note": "no rate card configured; all requests are free"
-        })),
+        }))),
     }
 }
