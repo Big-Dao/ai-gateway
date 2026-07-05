@@ -185,18 +185,16 @@ CI（`.github/workflows/ci.yml`）5 个 job：`lint`（fmt+clippy+doc）→ `tes
 
 ---
 
-## 已知问题清单（2026-07-05 核实，含 #6 合入后状态）
+## 已知问题清单（2026-07-05 重新核实，对照 commit `a54c0d5` 后实际代码）
 
 > 逐项对照代码核实。已完成项注明实现位置，未完成项注明现状。
 
 ### 当前阻断 CI（优先修，否则 PR 无法合入）
 
-- [ ] **`cargo clippy --deny warnings` 失败** → `gateway-core` 报 6 个 error（如 `field_reassign_with_default`、`manual_div_ceil`、`new_without_default`）。CI 的 lint job 以 `-D warnings` 视为 error，**当前 master CI 为红**（#6 未修）。
-- [ ] **`cargo check` 大量 warning** → 多为 unused import / never read 字段（流式中间结构体）。可用 `cargo fix` 收一部分。
+- _无。_ 重新核实后 `cargo fmt --check` / `cargo check` / `cargo clippy --deny warnings` 均通过（见下方"已完成"）。CI 不再因 lint 红。
 
 ### 安全/正确性
 
-- [ ] `is_retryable` 用 `msg.contains("400")` 字符串匹配判断状态码（`retry.rs`）→ 应改为结构化状态码字段
 - [ ] 计量事件落盘**未签名**（`persistence.rs`）：有文件写权限者可伪造/篡改账单记录 → 后续补逐事件 HMAC
 
 ### 企业级缺口（架构性）
@@ -207,6 +205,10 @@ CI（`.github/workflows/ci.yml`）5 个 job：`lint`（fmt+clippy+doc）→ `tes
 
 ### 已完成（保留作上下文）
 
+- [x] **`cargo clippy --deny warnings` 失败** → 已修：`a54c0d5` 补 `ApiKeyStore` / `RateCard` / `TenantConfig` 的 `Default` 实现（消除 `new_without_default`、`field_reassign_with_default`、`manual_div_ceil` 等），clippy 现 zero warning
+- [x] **`cargo check` 大量 warning** → 已修：unused import / never read 字段已清理，check 现 zero warning
+- [x] **`cargo fmt --check` 不通过** → 已修（2026-07-05 跑 `cargo fmt`）：`admin.rs` / `main.rs` / `prometheus.rs` 等格式归一
+- [x] `is_retryable` 字符串匹配状态码 → 已改为结构化匹配 `GatewayError::UpstreamError { status, .. }`，按 408/429/5xx 判定（`retry.rs`）
 - [x] 计量事件 `key_id` 归因 → 已用 `TenantContext.key_id`，不再是 `"_from_routes_"` 占位（`routes.rs`，#6）
 - [x] 计量事件持久化 → JSONL 落盘 + 启动回放（`persistence.rs`，#6；Key Store/配额仍待办）
 - [x] API Key 明文存储 → HMAC-SHA256 + 随机 salt（`auth_key.rs`）

@@ -575,19 +575,12 @@ async fn delete_key(
     }
 
     // Remove from the in-memory store (immediate revocation) ...
-    state
-        .auth_store
-        .write()
-        .await
-        .remove_by_id(&entry.key_id);
+    state.auth_store.write().await.remove_by_id(&entry.key_id);
 
     // ... and from the config source (prevents resurrection on restart).
     {
         let mut config = state.config.write().await;
-        config
-            .auth
-            .structured_keys
-            .retain(|k| k.0 != plaintext_key);
+        config.auth.structured_keys.retain(|k| k.0 != plaintext_key);
         config.auth.api_keys.retain(|k| k != &plaintext_key);
     }
 

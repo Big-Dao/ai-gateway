@@ -57,11 +57,9 @@ impl FileMeteringStore {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    let _ = tokio::fs::set_permissions(
-                        parent,
-                        std::fs::Permissions::from_mode(0o700),
-                    )
-                    .await;
+                    let _ =
+                        tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+                            .await;
                 }
             }
         }

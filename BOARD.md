@@ -43,7 +43,7 @@
 | MVP 5 | OTel + 审计日志 | 🟩 Sentinel | — | 🟠 部分完成（审计 done；OTel trace 未实现） |
 | MVP 6 | 成本计费 | ⬜ Ledger | — | ✅ done（PricingTable + costs API + billing reset + 阈值告警；`key_id` 接线遗漏见 CLAUDE.md） |
 
-> 2026-07-04 核实：MVP 0–6 代码均已在 master（commit `b2e982a`）。部分完成项与遗留 TODO 详见 `CLAUDE.md`「已知问题清单」。
+> 2026-07-05 重新核实：MVP 0–6 代码均已在 master（最新 commit `a54c0d5`）。CI lint 项（clippy / check / fmt）实测已全部通过——`CLAUDE.md` 旧清单标记的"阻断 CI"与 `is_retryable` 字符串匹配问题均已不在，文档已更正。遗留 TODO（计量事件未签名、Key Store/配额仍内存、OTel、MVP4 优先级路由）详见 `CLAUDE.md`「已知问题清单」。
 
 ---
 
@@ -100,7 +100,7 @@
 
 ## 🔄 合并流程
 
-> MVP 0–6 的并行开发阶段已结束，全部合入 `master`（commit `b2e982a`）。
+> MVP 0–6 的并行开发阶段已结束，全部合入 `master`（当前 HEAD `a54c0d5`）。
 > 下方是当时的流程，也适用于未来任何 MVP：把 `mvp2-metering` 等换成新分支名即可。
 
 1. 各自 worktree 开发完成 → push 到远程特性分支（如 `mvpN-<topic>`）
@@ -122,4 +122,4 @@
 
 ---
 
-*最后更新: 2026-07-04 — 文档刷新：MVP 状态对齐 master（commit `b2e982a`），逐项核实代码。遗留 TODO 见 `CLAUDE.md`「已知问题清单」。*
+*最后更新: 2026-07-05 — 文档刷新：MVP 状态对齐 master（HEAD `a54c0d5`），逐项核实代码；CI lint 项实测全过，遗留 TODO 见 `CLAUDE.md`「已知问题清单」。*
