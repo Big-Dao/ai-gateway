@@ -42,7 +42,7 @@ const MIN_REFILL_GAP_MS: u64 = 100;
 /// at capacity=60 this yields exactly 1 µ/ms (60 tokens/sec).
 fn micro_per_ms(capacity: u64) -> u64 {
     let numerator = capacity.saturating_mul(MICRO_PER_SEC);
-    (numerator + 59_999) / 60_000
+    numerator.div_ceil(60_000)
 }
 
 /// Process-wide token bucket shared by all tenants (MVP).
@@ -69,6 +69,7 @@ impl TokenBucket {
 
     /// Update the bucket's maximum capacity. Existing tokens above the new
     /// capacity are clamped down on the next refill.
+    #[allow(dead_code)]
     pub fn set_rpm(&self, rpm: u32) {
         let cap = rpm.max(1) as u64;
         self.capacity.store(cap, Ordering::SeqCst);

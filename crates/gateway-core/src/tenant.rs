@@ -10,7 +10,7 @@ impl Role {
     pub const TENANT_ADMIN: Role = Role(50);
     pub const ADMIN: Role = Role(100);
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_name(s: &str) -> Self {
         match s {
             "admin" => Role::ADMIN,
             "tenant_admin" => Role::TENANT_ADMIN,
@@ -27,13 +27,21 @@ impl Role {
     }
 }
 
+impl std::str::FromStr for Role {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Role::from_name(s))
+    }
+}
+
 impl<'de> Deserialize<'de> for Role {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        Ok(Role::from_str(&s))
+        Ok(Role::from_name(&s))
     }
 }
 
@@ -98,7 +106,7 @@ fn default_tpd() -> u64 {
 }
 
 /// Per-tenant configuration entry.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct TenantConfig {
     #[serde(default)]
     pub quotas: TenantQuotas,
@@ -111,17 +119,6 @@ pub struct TenantConfig {
     /// alert for this tenant (default).
     #[serde(default)]
     pub cost_alert_threshold_cents: Option<f64>,
-}
-
-impl Default for TenantConfig {
-    fn default() -> Self {
-        Self {
-            quotas: TenantQuotas::default(),
-            allowed_providers: None,
-            allowed_models: None,
-            cost_alert_threshold_cents: None,
-        }
-    }
 }
 
 /// Build a default-tenant config map for backward compat.
@@ -144,10 +141,10 @@ mod tests {
 
     #[test]
     fn test_role_from_str() {
-        assert_eq!(Role::from_str("admin"), Role::ADMIN);
-        assert_eq!(Role::from_str("tenant_admin"), Role::TENANT_ADMIN);
-        assert_eq!(Role::from_str("developer"), Role::DEVELOPER);
-        assert_eq!(Role::from_str("unknown"), Role::DEVELOPER); // fallback
+        assert_eq!(Role::from_name("admin"), Role::ADMIN);
+        assert_eq!(Role::from_name("tenant_admin"), Role::TENANT_ADMIN);
+        assert_eq!(Role::from_name("developer"), Role::DEVELOPER);
+        assert_eq!(Role::from_name("unknown"), Role::DEVELOPER); // fallback
     }
 
     #[test]

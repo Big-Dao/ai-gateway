@@ -48,7 +48,8 @@ struct OllamaResponse {
 
 #[derive(Deserialize)]
 struct OllamaResponseMessage {
-    role: String,
+    #[serde(rename = "role")]
+    _role: String,
     content: String,
 }
 

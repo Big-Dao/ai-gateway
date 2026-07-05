@@ -3,7 +3,6 @@ use axum::{
     http::{self, header},
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
 use std::sync::Arc;
 use tracing::warn;
@@ -43,7 +42,7 @@ pub async fn auth_middleware(
         .load(std::sync::atomic::Ordering::Relaxed);
 
     let path = request.uri().path();
-    if !enabled || UNAUTHENTICATED_PATHS.iter().any(|p| path == *p) {
+    if !enabled || UNAUTHENTICATED_PATHS.contains(&path) {
         return next.run(request).await;
     }
 
@@ -68,7 +67,7 @@ pub async fn auth_middleware(
                     // Inject tenant context (MVP 1).
                     request.extensions_mut().insert(TenantContext {
                         tenant_id: entry.tenant_id.clone(),
-                        role: gateway_core::tenant::Role::from_str(&entry.role),
+                        role: gateway_core::tenant::Role::from_name(&entry.role),
                         key_id: entry.key_id.clone(),
                     });
                     next.run(request).await

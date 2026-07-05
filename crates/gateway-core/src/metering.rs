@@ -12,7 +12,7 @@ use crate::types::Usage;
 ///
 /// Stored in `AppConfig.rate_config` (platform-wide default). Operators can
 /// later extend this to per-provider/model pricing via admin config.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RateCard {
     /// Cost per 1M prompt tokens, in the smallest currency unit (e.g. cents).
     #[serde(default)]
@@ -22,21 +22,12 @@ pub struct RateCard {
     pub completion_per_million: u64,
 }
 
-impl Default for RateCard {
-    fn default() -> Self {
-        Self {
-            prompt_per_million: 0,
-            completion_per_million: 0,
-        }
-    }
-}
-
 impl RateCard {
     /// Compute the estimated cost in the card's base unit using ceil division
     /// so sub-million-token charges are not rounded to zero.
     pub fn estimate_cost(&self, usage: &Usage) -> u64 {
-        let prompt_units = (usage.prompt_tokens as u64 + 999_999) / 1_000_000;
-        let completion_units = (usage.completion_tokens as u64 + 999_999) / 1_000_000;
+        let prompt_units = (usage.prompt_tokens as u64).div_ceil(1_000_000);
+        let completion_units = (usage.completion_tokens as u64).div_ceil(1_000_000);
         prompt_units
             .saturating_mul(self.prompt_per_million)
             .saturating_add(completion_units.saturating_mul(self.completion_per_million))
@@ -180,11 +171,13 @@ mod tests {
 
     #[test]
     fn test_pricing_fallback_to_default() {
-        let mut table = PricingTable::default();
-        table.default = Some(ModelRate {
-            input_per_1m: 5.0,
-            output_per_1m: 15.0,
-        });
+        let table = PricingTable {
+            default: Some(ModelRate {
+                input_per_1m: 5.0,
+                output_per_1m: 15.0,
+            }),
+            ..Default::default()
+        };
         let u = usage(1_000_000, 1_000_000);
         // 1.0 * 5.0 + 1.0 * 15.0 = 20.0
         assert!((table.estimate_cost("unknown-model", &u) - 20.0).abs() < 1e-9);

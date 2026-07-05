@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 /// Extension key for handing the request id into inner handlers if needed.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct RequestId(pub String);
 
 pub async fn x_request_id_middleware(request: Request, next: Next) -> Response {

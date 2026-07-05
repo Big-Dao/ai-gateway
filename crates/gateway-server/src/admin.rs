@@ -9,17 +9,16 @@ use gateway_core::audit::AuditAction;
 use gateway_core::metering::CostSummary;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::circuit_breaker::CircuitState;
 use crate::metrics::metering::TenantUsage;
 use crate::middleware::auth::AuthKey;
-use crate::middleware::rbac::{require_role, require_tenant};
+use crate::middleware::rbac::require_role;
 use crate::routes::ApiError;
 use crate::state::AppState;
 use gateway_core::auth_key::ApiKeyEntry;
-use gateway_core::error::GatewayError;
-use gateway_core::tenant::{Role, TenantContext};
+use gateway_core::tenant::Role;
 
 // ─── Request/Response types ─────────────────────────────────────────
 
@@ -208,7 +207,7 @@ async fn list_providers(
         .iter()
         .map(|(name, cfg)| ProviderInfo {
             name: name.clone(),
-            api_key_set: cfg.api_key.as_ref().map_or(false, |k| !k.is_empty()),
+            api_key_set: cfg.api_key.as_ref().is_some_and(|k| !k.is_empty()),
             base_url: cfg.base_url.clone(),
             models: cfg.models.clone(),
         })
@@ -236,7 +235,7 @@ async fn get_provider(
 
     Ok(Json(ProviderInfo {
         name,
-        api_key_set: cfg.api_key.as_ref().map_or(false, |k| !k.is_empty()),
+        api_key_set: cfg.api_key.as_ref().is_some_and(|k| !k.is_empty()),
         base_url: cfg.base_url.clone(),
         models: cfg.models.clone(),
     }))
@@ -397,7 +396,7 @@ async fn list_keys(
 
     // Determine if caller is global admin
     let is_admin = matches!(
-        store.verify_by_id(&auth_key.0).map(|e| Role::from_str(&e.role)),
+        store.verify_by_id(&auth_key.0).map(|e| Role::from_name(&e.role)),
         Some(role) if role >= Role::ADMIN
     );
 
@@ -441,7 +440,7 @@ async fn create_key(
         let store = state.auth_store.read().await;
         store
             .verify_by_id(&auth_key.0)
-            .map(|e| Role::from_str(&e.role))
+            .map(|e| Role::from_name(&e.role))
             .unwrap_or(Role::DEVELOPER)
     };
 
@@ -467,7 +466,7 @@ async fn create_key(
             )))
         }
     }
-    if caller_role < Role::ADMIN && Role::from_str(&target_role) >= Role::TENANT_ADMIN {
+    if caller_role < Role::ADMIN && Role::from_name(&target_role) >= Role::TENANT_ADMIN {
         return Err(ApiError(gateway_core::error::GatewayError::Forbidden(
             "insufficient privileges to create an elevated-role key".into(),
         )));
@@ -549,7 +548,7 @@ async fn delete_key(
         let store = state.auth_store.read().await;
         store
             .verify_by_id(&auth_key.0)
-            .map(|e| Role::from_str(&e.role))
+            .map(|e| Role::from_name(&e.role))
             .unwrap_or(Role::DEVELOPER)
     };
 
@@ -660,7 +659,7 @@ async fn update_quota(
         let store = state.auth_store.read().await;
         store
             .verify_by_id(&auth_key.0)
-            .map(|e| Role::from_str(&e.role))
+            .map(|e| Role::from_name(&e.role))
             .unwrap_or(Role::DEVELOPER)
     };
     state
@@ -702,7 +701,7 @@ async fn list_tenants(
 
     let config = state.config.read().await;
     let is_admin = matches!(
-        state.auth_store.read().await.verify_by_id(&auth_key.0).map(|e| Role::from_str(&e.role)),
+        state.auth_store.read().await.verify_by_id(&auth_key.0).map(|e| Role::from_name(&e.role)),
         Some(role) if role >= Role::ADMIN
     );
 
@@ -945,7 +944,7 @@ async fn get_all_usage(
             .read()
             .await
             .verify_by_id(&auth_key.0)
-            .map(|e| Role::from_str(&e.role)),
+            .map(|e| Role::from_name(&e.role)),
         Some(role) if role >= Role::ADMIN
     );
 
@@ -1018,7 +1017,7 @@ async fn post_billing_reset(
         let store = state.auth_store.read().await;
         store
             .verify_by_id(&auth_key.0)
-            .map(|e| Role::from_str(&e.role))
+            .map(|e| Role::from_name(&e.role))
             .unwrap_or(Role::DEVELOPER)
     };
     let now_ms = std::time::SystemTime::now()
@@ -1075,7 +1074,7 @@ async fn get_costs(
             .read()
             .await
             .verify_by_id(&auth_key.0)
-            .map(|e| Role::from_str(&e.role)),
+            .map(|e| Role::from_name(&e.role)),
         Some(role) if role >= Role::ADMIN
     );
 

@@ -61,7 +61,8 @@ struct GeminiCandidate {
 #[derive(Deserialize)]
 struct GeminiCandidateContent {
     parts: Vec<GeminiResponsePart>,
-    role: Option<String>,
+    #[serde(rename = "role")]
+    _role: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -313,8 +314,7 @@ impl LLMProvider for GeminiProvider {
                         let text = String::from_utf8_lossy(&bytes);
                         for line in text.lines() {
                             let line = line.trim();
-                            if line.starts_with("data: ") {
-                                let data = &line[6..];
+                            if let Some(data) = line.strip_prefix("data: ") {
                                 if let Ok(gemini_resp) =
                                     serde_json::from_str::<GeminiResponse>(data)
                                 {

@@ -1,10 +1,8 @@
 use async_trait::async_trait;
-use futures::stream;
 use futures::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Client;
 use std::collections::HashMap;
-use std::pin::Pin;
 use tracing::{error, info};
 
 use gateway_core::error::GatewayError;
@@ -130,8 +128,7 @@ impl LLMProvider for OpenAIProvider {
                     let text = String::from_utf8_lossy(&bytes);
                     for line in text.lines() {
                         let line = line.trim();
-                        if line.starts_with("data: ") {
-                            let data = &line[6..];
+                        if let Some(data) = line.strip_prefix("data: ") {
                             if data == "[DONE]" {
                                 return None;
                             }

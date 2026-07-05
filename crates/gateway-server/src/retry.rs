@@ -1,11 +1,9 @@
 use rand::Rng;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use tracing::{info, instrument, warn};
 
 use gateway_core::error::GatewayError;
-use gateway_core::provider::LLMProvider;
 use gateway_core::types::*;
 
 use crate::circuit_breaker::CircuitBreaker;
@@ -23,6 +21,7 @@ pub struct RetryConfig {
     /// Backoff multiplier.
     pub backoff_multiplier: f64,
     /// Whether to attempt fallback to another provider on final failure.
+    #[allow(dead_code)]
     pub enable_fallback: bool,
 }
 
@@ -158,15 +157,15 @@ pub async fn chat_completion_with_retry(
         }
     }
 
-    Err(last_error.unwrap_or_else(|| GatewayError::ProviderNotFound(model)))
+    Err(last_error.unwrap_or(GatewayError::ProviderNotFound(model)))
 }
 
 /// Execute a streaming chat completion with retry and fallback.
-#[instrument(skip(state, circuit_breaker, config, request), fields(model = %request.model))]
+#[instrument(skip(state, circuit_breaker, _config, request), fields(model = %request.model))]
 pub async fn chat_completion_stream_with_retry(
     state: &AppState,
     circuit_breaker: &CircuitBreaker,
-    config: &RetryConfig,
+    _config: &RetryConfig,
     request: ChatCompletionRequest,
 ) -> Result<(gateway_core::provider::ChunkStream, AttemptInfo), GatewayError> {
     let model = request.model.clone();
@@ -236,7 +235,7 @@ pub async fn chat_completion_stream_with_retry(
         }
     }
 
-    Err(last_error.unwrap_or_else(|| GatewayError::ProviderNotFound(model)))
+    Err(last_error.unwrap_or(GatewayError::ProviderNotFound(model)))
 }
 
 /// Build the ordered list of provider names to try for a given model.

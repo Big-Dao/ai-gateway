@@ -31,6 +31,7 @@ pub fn free_port() -> u16 {
         .port()
 }
 
+#[allow(dead_code)]
 impl TestServer {
     /// Spawn a gateway-server process. A TOML config file is written to
     /// `/tmp/gateway-test-{port}.toml` and the child's stdout/stderr are

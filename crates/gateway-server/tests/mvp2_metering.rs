@@ -5,19 +5,6 @@ fn u(s: &TestServer, p: &str) -> String {
     format!("{}{p}", s.base_url)
 }
 
-/// Spawn a server with structured_keys (`api_keys` TOML field) and a high
-/// rate-limit so rate-limit middleware never interferes with quota testing.
-async fn spawn_quota_test_server() -> TestServer {
-    TestServer::spawn_with(
-        &["admin-key", "dev-key"],
-        &[
-            ("AUTH__ENABLED", "true".into()),
-            ("RATE_LIMIT__REQUESTS_PER_MINUTE", "1000".into()),
-        ],
-    )
-    .await
-}
-
 // ─── Admin quota API: read/update per-tenant quota ─────────────────────────
 
 #[tokio::test]

@@ -2,9 +2,8 @@ use gateway_core::metering::{CostBreakdown, CostSummary, ModelCost};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::persistence::FileMeteringStore;
 
@@ -373,6 +372,7 @@ impl MeteringService {
     }
 
     /// Snapshot event count (for PVC flush, deferred).
+    #[allow(dead_code)]
     pub async fn event_count(&self) -> usize {
         self.events.lock().await.len()
     }
@@ -409,6 +409,7 @@ impl MeteringService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::SystemTime;
 
     /// Helper to build a minimal metering event.
     fn mk_event(tenant_id: &str, cost_cents: f64) -> MeteringEvent {

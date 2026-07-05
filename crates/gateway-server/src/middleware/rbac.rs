@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use tracing::warn;
 
 use crate::middleware::auth::AuthKey;
@@ -18,7 +17,7 @@ pub async fn require_role(
         .verify_by_id(&auth_key.0)
         .ok_or_else(|| GatewayError::AuthenticationFailed("Key not found".into()))?;
 
-    let role = Role::from_str(&entry.role);
+    let role = Role::from_name(&entry.role);
     if role < min_role {
         warn!(
             key_id = %auth_key.0,
@@ -36,6 +35,7 @@ pub async fn require_role(
 }
 
 /// Check that the authenticated key belongs to the given tenant (or is global admin).
+#[allow(dead_code)]
 pub async fn require_tenant(
     state: &AppState,
     auth_key: &AuthKey,
@@ -46,7 +46,7 @@ pub async fn require_tenant(
         .verify_by_id(&auth_key.0)
         .ok_or_else(|| GatewayError::AuthenticationFailed("Key not found".into()))?;
 
-    let role = Role::from_str(&entry.role);
+    let role = Role::from_name(&entry.role);
     if entry.tenant_id != tenant_id && role < Role::ADMIN {
         return Err(GatewayError::Forbidden(format!(
             "Key does not belong to tenant '{}'",
@@ -59,15 +59,14 @@ pub async fn require_tenant(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use gateway_core::auth_key::{ApiKeyEntry, ApiKeyStore};
     use gateway_core::tenant::Role;
 
     #[test]
-    fn test_role_from_str_matches() {
-        assert_eq!(Role::from_str("admin"), Role::ADMIN);
-        assert_eq!(Role::from_str("tenant_admin"), Role::TENANT_ADMIN);
-        assert_eq!(Role::from_str("developer"), Role::DEVELOPER);
+    fn test_role_from_name_matches() {
+        assert_eq!(Role::from_name("admin"), Role::ADMIN);
+        assert_eq!(Role::from_name("tenant_admin"), Role::TENANT_ADMIN);
+        assert_eq!(Role::from_name("developer"), Role::DEVELOPER);
     }
 
     #[test]

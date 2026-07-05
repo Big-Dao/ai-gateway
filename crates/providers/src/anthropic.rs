@@ -37,7 +37,8 @@ struct AnthropicResponse {
     id: String,
     #[serde(rename = "type")]
     _response_type: String,
-    role: String,
+    #[serde(rename = "role")]
+    _role: String,
     content: Vec<AnthropicContent>,
     model: String,
     stop_reason: Option<String>,
@@ -64,36 +65,41 @@ struct AnthropicStreamEvent {
     #[serde(default)]
     message: Option<AnthropicMessageStart>,
     #[serde(default)]
-    content_block: Option<AnthropicContentBlock>,
+    #[serde(rename = "content_block")]
+    _content_block: Option<AnthropicContentBlock>,
     #[serde(default)]
     delta: Option<AnthropicDelta>,
     #[serde(default)]
-    usage: Option<AnthropicStreamUsage>,
+    #[serde(rename = "usage")]
+    _usage: Option<AnthropicStreamUsage>,
 }
 
 #[derive(Deserialize)]
 struct AnthropicMessageStart {
     id: String,
-    usage: Option<AnthropicUsage>,
+    #[serde(rename = "usage")]
+    _usage: Option<AnthropicUsage>,
 }
 
 #[derive(Deserialize)]
 struct AnthropicContentBlock {
     #[serde(rename = "type")]
-    content_type: String,
-    text: Option<String>,
+    _content_type: String,
+    #[serde(rename = "text")]
+    _text: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct AnthropicDelta {
     #[serde(rename = "type")]
-    delta_type: Option<String>,
+    _delta_type: Option<String>,
     text: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct AnthropicStreamUsage {
-    output_tokens: Option<u32>,
+    #[serde(rename = "output_tokens")]
+    _output_tokens: Option<u32>,
 }
 
 pub struct AnthropicProvider {
@@ -320,8 +326,7 @@ impl LLMProvider for AnthropicProvider {
                             if line.starts_with("event: ") {
                                 continue;
                             }
-                            if line.starts_with("data: ") {
-                                let data = &line[6..];
+                            if let Some(data) = line.strip_prefix("data: ") {
                                 if let Ok(event) =
                                     serde_json::from_str::<AnthropicStreamEvent>(data)
                                 {

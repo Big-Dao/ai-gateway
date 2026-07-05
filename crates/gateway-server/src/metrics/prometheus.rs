@@ -1,6 +1,6 @@
 //! Prometheus metrics exporter (MVP 2+3).
 use prometheus::{
-    Encoder, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge,
+    Encoder, HistogramOpts, HistogramVec, IntCounter, IntCounterVec,
     IntGaugeVec, Opts, Registry, TextEncoder,
 };
 
@@ -118,6 +118,7 @@ fn register_all(
     )
 }
 
+#[allow(dead_code)]
 pub struct PrometheusExporter {
     registry: Registry,
     requests_total: IntCounterVec,
@@ -189,6 +190,7 @@ impl PrometheusExporter {
             .inc();
     }
 
+    #[allow(dead_code)]
     pub fn record_tokens(
         &self,
         model: &str,
@@ -202,37 +204,44 @@ impl PrometheusExporter {
             .inc_by(amount);
     }
 
+    #[allow(dead_code)]
     pub fn record_error(&self, model: &str, provider: &str, error_type: &str) {
         self.errors_total
             .with_label_values(&[model, provider, error_type])
             .inc();
     }
 
+    #[allow(dead_code)]
     pub fn record_cache_hit(&self) {
         self.cache_hits_total.inc();
     }
+    #[allow(dead_code)]
     pub fn record_cache_miss(&self) {
         self.cache_misses_total.inc();
     }
 
+    #[allow(dead_code)]
     pub fn record_duration(&self, model: &str, provider: &str, secs: f64) {
         self.request_duration_seconds
             .with_label_values(&[model, provider])
             .observe(secs);
     }
 
+    #[allow(dead_code)]
     pub fn set_active_requests(&self, provider: &str, tenant: &str, count: i64) {
         self.active_requests
             .with_label_values(&[provider, tenant])
             .set(count);
     }
 
+    #[allow(dead_code)]
     pub fn set_circuit_breaker_state(&self, provider: &str, state: i64) {
         self.circuit_breaker_state
             .with_label_values(&[provider])
             .set(state);
     }
 
+    #[allow(dead_code)]
     pub fn set_rate_limit_remaining(&self, tenant: &str, remaining: i64) {
         self.rate_limit_remaining
             .with_label_values(&[tenant])

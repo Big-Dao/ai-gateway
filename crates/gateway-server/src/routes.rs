@@ -109,7 +109,7 @@ pub async fn readiness(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     // Config must be readable (it isn't poisoned / uninitialized).
     // RwLock::read() would only fail if poisoned; here we treat lock acquisition
     // itself as the liveness signal. If we get the lock, config is "loaded".
-    let config_ok = state.config.read().await.server.host.len() > 0;
+    let config_ok = !state.config.read().await.server.host.is_empty();
 
     // Determine the best circuit state across all providers. If no providers
     // are tracked yet (fresh boot), we optimistically treat the cluster as
