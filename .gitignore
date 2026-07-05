@@ -4,4 +4,5 @@
 .env
 config.toml
 metrics_snapshots/
-.claude/
+.claude/settings.local.json
+.claude/worktrees/
