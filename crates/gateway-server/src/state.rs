@@ -146,13 +146,40 @@ impl AppState {
         let rpm = config.rate_limit.requests_per_minute;
         let rate_limiter = Arc::new(crate::middleware::rate_limit::RateLimiter::new(rpm));
         let auth_enabled = AtomicBool::new(config.auth.enabled);
-        let metering = MeteringService::new();
+        let mut metering = MeteringService::new();
 
-        // MVP 6 (billing reset): clear any pre-existing cost data on startup so
-        // each boot begins a fresh metering window. Request / token tallies
-        // are intentionally preserved — they are cumulative, not per-cycle.
-        metering.reset_billing_window().await;
-        tracing::info!(target: "billing", "billing window reset on startup");
+        // P0 stage 4: if a metering store is configured, replay persisted
+        // events so usage/cost survive restart (replaces the old startup
+        // reset that zeroed cost on every boot). Otherwise (no metering_path,
+        // e.g. in tests) fall back to clearing the in-memory window.
+        if let Some(path) = &config.metering_path {
+            let store = Arc::new(crate::persistence::FileMeteringStore::new(
+                std::path::PathBuf::from(path),
+            ));
+            match store.load().await {
+                Ok(events) => {
+                    let n = events.len();
+                    metering.load_events(events).await;
+                    tracing::info!(
+                        target: "billing",
+                        events_loaded = n,
+                        "replayed persisted metering events"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "billing",
+                        error = %e,
+                        "failed to load metering store; starting fresh"
+                    );
+                    metering.reset_billing_window().await;
+                }
+            }
+            metering.set_store(store);
+        } else {
+            metering.reset_billing_window().await;
+            tracing::info!(target: "billing", "billing window reset on startup (no metering_path)");
+        }
 
         Ok(Self {
             config: RwLock::new(config),

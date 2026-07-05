@@ -4,6 +4,7 @@ mod json_logger;
 mod log_buffer;
 mod metrics;
 mod middleware;
+mod persistence;
 mod retry;
 mod routes;
 mod state;

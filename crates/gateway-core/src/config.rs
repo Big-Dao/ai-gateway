@@ -27,6 +27,12 @@ pub struct AppConfig {
     /// Parent directories are created on startup.
     #[serde(default)]
     pub audit_path: Option<String>,
+    /// When set, metering events are appended as JSON lines to this path and
+    /// replayed on startup so usage/cost aggregates survive restarts (P0
+    /// stage 4 — replaces the startup billing-window reset that zeroed cost
+    /// on every boot). Parent directories are created on startup.
+    #[serde(default)]
+    pub metering_path: Option<String>,
 }
 
 /// Per-provider behavioral tweaks for OpenAI-compatible providers.
