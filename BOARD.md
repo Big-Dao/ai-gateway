@@ -122,4 +122,4 @@
 
 ---
 
-*最后更新: 2026-07-05 — 文档刷新：MVP 状态对齐 master（HEAD `a54c0d5`），逐项核实代码；CI lint 项实测全过，遗留 TODO 见 `CLAUDE.md`「已知问题清单」。*
+*最后更新: 2026-07-05 — 文档刷新：MVP 状态对齐 master（HEAD `a54c0d5`），逐项核实代码；CI lint 项实测全过，遗留 TODO 见 `CLAUDE.md`「已知问题清单」。新增 `docs/architecture-analysis.md` 架构分析文档。*
