@@ -1,7 +1,7 @@
 //! Prometheus metrics exporter (MVP 2+3).
 use prometheus::{
-    Encoder, HistogramOpts, HistogramVec, IntCounter, IntCounterVec,
-    IntGaugeVec, Opts, Registry, TextEncoder,
+    Encoder, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGaugeVec, Opts, Registry,
+    TextEncoder,
 };
 
 fn register_all(
